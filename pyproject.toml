@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nystorm_ncut"
+version = "0.0.1"
+authors = [
+    { name = "Huzheng Yang", email = "huze.yann@gmail.com" },
+    { name = "Wentinn Liao", email = "wentinn.liao@gmail.com" },
+]
+description = "Normalized Cut and Nyström Approximation"
+readme = "README.md"
+requires-python = ">=3"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Documentation = "https://github.com/JophiArcana/Nystrom-NCUT/"
+Github = "https://github.com/JophiArcana/Nystrom-NCUT/"
