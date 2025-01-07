@@ -1,3 +1,17 @@
+Metadata-Version: 2.1
+Name: nystrom_ncut
+Version: 0.0.1
+Summary: Normalized Cut and Nyström Approximation
+Author-email: Huzheng Yang <huze.yann@gmail.com>, Wentinn Liao <wentinn.liao@gmail.com>
+Project-URL: Documentation, https://github.com/JophiArcana/Nystrom-NCUT/
+Project-URL: Github, https://github.com/JophiArcana/Nystrom-NCUT/
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3
+Description-Content-Type: text/markdown
+License-File: LICENSE
+
 
 
 <div style="text-align: center;">
