@@ -96,7 +96,6 @@ def distance_from_features(
         D = D / (2 * features.var(dim=0).sum())
     else:
         raise ValueError("distance should be 'cosine' or 'euclidean', 'rbf'")
-
     return D
 
 
@@ -184,13 +183,37 @@ def propagate_knn(
     V_list = []
     for _v in torch.chunk(inp_features, n_chunks, dim=0):
         _v = _v.to(device)
-        _A = affinity_from_features(subgraph_features, _v, affinity_focal_gamma, distance).mT
 
-        if knn is not None:
-            mask = torch.full_like(_A, True, dtype=torch.bool)
-            mask[torch.arange(len(_v))[:, None], _A.topk(knn, dim=-1, largest=True).indices] = False
-            _A[mask] = 0.0
-        _A = F.normalize(_A, p=1, dim=-1)
+        # _A = affinity_from_features(subgraph_features, _v, affinity_focal_gamma, distance).mT
+        # if knn is not None:
+        #     mask = torch.full_like(_A, True, dtype=torch.bool)
+        #     mask[torch.arange(len(_v))[:, None], _A.topk(knn, dim=-1, largest=True).indices] = False
+        #     _A[mask] = 0.0
+        # _A = F.normalize(_A, p=1, dim=-1)
+
+        if distance == 'cosine':
+            _A = _v @ subgraph_features.T
+        elif distance == 'euclidean':
+            _A = - torch.cdist(_v, subgraph_features, p=2)
+        elif distance == 'rbf':
+            _A = - torch.cdist(_v, subgraph_features, p=2) ** 2
+        else:
+            raise ValueError("distance should be 'cosine' or 'euclidean', 'rbf'")
+
+        # keep topk KNN for each row
+        topk_sim, topk_idx = _A.topk(knn, dim=-1, largest=True)
+        row_id = torch.arange(topk_idx.shape[0], device=_A.device)[:, None].expand(
+            -1, topk_idx.shape[1]
+        )
+        _A = torch.sparse_coo_tensor(
+            torch.stack([row_id, topk_idx], dim=-1).reshape(-1, 2).T,
+            topk_sim.reshape(-1),
+            size=(_A.shape[0], _A.shape[1]),
+            device=_A.device,
+        )
+        _A = _A.to_dense().to(dtype=subgraph_output.dtype)
+        _D = _A.sum(-1)
+        _A /= _D[:, None]
 
         _V = _A @ subgraph_output
         if move_output_to_cpu:

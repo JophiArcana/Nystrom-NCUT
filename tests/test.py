@@ -38,17 +38,18 @@ if __name__ == "__main__":
     # raise Exception(
 
     torch.set_printoptions(precision=8, sci_mode=False, linewidth=400)
-    torch.set_default_dtype(torch.float64)
+    torch.set_default_dtype(torch.float32)
     torch.manual_seed(1212)
     np.random.seed(1212)
 
-    M = torch.rand((12000, 12))
-    NC = NCUT(n_components=12, num_sample=10000, sample_method="farthest")
+    M = torch.rand((1200, 12))
+    NC = NCUT(n_components=30, num_sample=1000, sample_method="farthest", eig_solver="svd")
 
     torch.manual_seed(1212)
     np.random.seed(1212)
     X, eigs = NC.fit_transform(M)
     print(eigs)
+    # print(X.mT @ X)
 
     normalized_M = Fn.normalize(M, p=2, dim=-1)
     A = torch.exp(-(1 - normalized_M @ normalized_M.mT))
