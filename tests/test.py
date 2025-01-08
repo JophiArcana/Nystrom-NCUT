@@ -1,7 +1,3 @@
-import os
-
-# os.environ['HF_ACCESS_TOKEN'] = "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"
-
 import numpy as np
 import torch
 from src.nystrom_ncut.ncut_pytorch import NCUT, axis_align
