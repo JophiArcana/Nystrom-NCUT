@@ -34,7 +34,7 @@ def _rgb_with_dimensionality_reduction(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     subgraph_indices = run_subgraph_sampling(
         features,
-        num_sample=num_sample,
+        num_sample,
         sample_method="farthest",
     )
 

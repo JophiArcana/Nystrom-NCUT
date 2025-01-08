@@ -11,7 +11,7 @@ from .common import ceildiv, lazy_normalize
 @torch.no_grad()
 def run_subgraph_sampling(
     features: torch.Tensor,
-    num_sample: int = 300,
+    num_sample: int,
     max_draw: int = 1000000,
     sample_method: Literal["farthest", "random"] = "farthest",
 ):
@@ -272,7 +272,7 @@ def propagate_eigenvectors(
     # sample subgraph
     subgraph_indices = run_subgraph_sampling(
         features,
-        num_sample=num_sample,
+        num_sample,
         sample_method=sample_method,
     )
 

@@ -173,9 +173,10 @@ class NCUT(OnlineNystrom):
         else:
             sampled_indices = run_subgraph_sampling(
                 features,
-                num_sample=self.num_sample,
+                self.num_sample,
                 sample_method=self.sample_method,
             )
+        sampled_indices = torch.sort(sampled_indices).values
         sampled_features = features[sampled_indices]
         OnlineNystrom.fit(self, sampled_features)
 

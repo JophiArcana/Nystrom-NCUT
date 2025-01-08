@@ -39,26 +39,26 @@ if __name__ == "__main__":
 
     torch.set_printoptions(precision=8, sci_mode=False, linewidth=400)
     torch.set_default_dtype(torch.float64)
-    # torch.manual_seed(1212)
-    # np.random.seed(1212)
+    torch.manual_seed(1212)
+    np.random.seed(1212)
 
-    M = torch.rand((200, 12))
-    NC = NCUT(n_components=12, num_sample=80, sample_method="random", chunk_size=20)
+    M = torch.rand((12000, 12))
+    NC = NCUT(n_components=12, num_sample=10000, sample_method="farthest")
 
     torch.manual_seed(1212)
     np.random.seed(1212)
     X, eigs = NC.fit_transform(M)
     print(eigs)
-    raise Exception()
 
     normalized_M = Fn.normalize(M, p=2, dim=-1)
     A = torch.exp(-(1 - normalized_M @ normalized_M.mT))
     R = torch.diag(torch.sum(A, dim=-1) ** -0.5)
     L = R @ A @ R
     # print(L)
-    print(X @ torch.diag(eigs) @ X.mT)
-    print(L)
-    print(torch.abs(X @ torch.diag(eigs) @ X.mT / L - 1))
+    # print(X @ torch.diag(eigs) @ X.mT)
+    # print(L)
+    RE = torch.abs(X @ torch.diag(eigs) @ X.mT / L - 1)
+    print(RE.max().item(), RE.mean().item())
 
     # torch.manual_seed(1212)
     # np.random.seed(1212)
