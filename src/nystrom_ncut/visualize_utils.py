@@ -420,7 +420,7 @@ def propagate_rgb_color(
     knn: int = 10,
     num_sample: int = 1000,
     sample_method: Literal["farthest", "random"] = "farthest",
-    chunk_size: int = 8096,
+    chunk_size: int = 8192,
     device: str = None,
 ):
     """Propagate RGB color to new nodes using KNN.
@@ -431,7 +431,7 @@ def propagate_rgb_color(
         knn (int): number of KNN to propagate RGB color, default 1
         num_sample (int): number of samples for subgraph sampling, default 50000
         sample_method (str): sample method, 'farthest' (default) or 'random'
-        chunk_size (int): chunk size for matrix multiplication, default 8096
+        chunk_size (int): chunk size for matrix multiplication, default 8192
         device (str): device to use for computation, if None, will not change device
     Returns:
         torch.Tensor: propagated RGB color for each data sample, shape (n_new_samples, 3)

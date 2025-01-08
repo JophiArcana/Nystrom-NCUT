@@ -43,7 +43,7 @@ def run_subgraph_sampling(
             sampled_indices = torch.randperm(features.shape[0])[:num_sample]
         else:
             raise ValueError("sample_method should be 'farthest' or 'random'")
-    return sampled_indices
+    return sampled_indices.to(features.device)
 
 
 def farthest_point_sampling(
@@ -139,7 +139,7 @@ def propagate_knn(
     knn: int = 10,
     distance: Literal["cosine", "euclidean", "rbf"] = "cosine",
     affinity_focal_gamma: float = 1.0,
-    chunk_size: int = 8096,
+    chunk_size: int = 8192,
     device: str = None,
     move_output_to_cpu: bool = False,
 ):
@@ -206,7 +206,7 @@ def propagate_nearest(
     inp_features: torch.Tensor,
     subgraph_features: torch.Tensor,
     distance: Literal["cosine", "euclidean", "rbf"] = "cosine",
-    chunk_size: int = 8096,
+    chunk_size: int = 8192,
     device: str = None,
     move_output_to_cpu: bool = False,
 ):
@@ -254,7 +254,7 @@ def propagate_eigenvectors(
         knn (int): number of KNN to propagate eigenvectors, default 3
         num_sample (int): number of samples for subgraph sampling, default 50000
         sample_method (str): sample method, 'farthest' (default) or 'random'
-        chunk_size (int): chunk size for matrix multiplication, default 8096
+        chunk_size (int): chunk size for matrix multiplication, default 8192
         device (str): device to use for computation, if None, will not change device
     Returns:
         torch.Tensor: propagated eigenvectors, shape (n_new_samples, num_eig)

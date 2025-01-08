@@ -94,20 +94,19 @@ class NCUT(OnlineNystrom):
 
     def __init__(
         self,
-        num_eig: int = 100,
+        n_components: int = 100,
         affinity_focal_gamma: float = 1.0,
         num_sample: int = 10000,
         sample_method: Literal["farthest", "random"] = "farthest",
         distance: DistanceOptions = "cosine",
         eig_solver: EigSolverOptions = "svd_lowrank",
         normalize_features: bool = None,
-        device: str = None,
         move_output_to_cpu: bool = False,
-        matmul_chunk_size: int = 8096,
+        chunk_size: int = 8192,
     ):
         """
         Args:
-            num_eig (int): number of top eigenvectors to return
+            n_components (int): number of top eigenvectors to return
             affinity_focal_gamma (float): affinity matrix temperature, lower t reduce the not-so-connected edge weights,
                 smaller t result in more sharp eigenvectors.
             num_sample (int): number of samples for Nystrom-like approximation,
@@ -118,17 +117,15 @@ class NCUT(OnlineNystrom):
             eig_solver (str): eigen decompose solver, ['svd_lowrank', 'lobpcg', 'svd', 'eigh'].
             normalize_features (bool): normalize input features before computing affinity matrix,
                 default 'None' is True for cosine distance, False for euclidean distance and rbf
-            device (str): device to use for eigen computation,
-                move to GPU to speeds up a bit (~5x faster)
             move_output_to_cpu (bool): move output to CPU, set to True if you have memory issue
-            matmul_chunk_size (int): chunk size for large-scale matrix multiplication
+            chunk_size (int): chunk size for large-scale matrix multiplication
         """
         OnlineNystrom.__init__(
             self,
-            n_components=num_eig,
+            n_components=n_components,
             kernel=LaplacianKernel(affinity_focal_gamma, distance, eig_solver),
             eig_solver=eig_solver,
-            chunk_size=matmul_chunk_size,
+            chunk_size=chunk_size,
         )
         self.num_sample = num_sample
         self.sample_method = sample_method
@@ -140,19 +137,14 @@ class NCUT(OnlineNystrom):
             if distance in ["euclidean", "rbf"]:
                 self.normalize_features = False
 
-        self.device = device
         self.move_output_to_cpu = move_output_to_cpu
-        self.matmul_chunk_size = matmul_chunk_size
+        self.chunk_size = chunk_size
 
     def _fit_helper(
         self,
         features: torch.Tensor,
         precomputed_sampled_indices: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # move subgraph gpu to speed up
-        original_device = features.device
-        device = original_device if self.device is None else self.device
-
         _n = features.shape[0]
         if self.num_sample >= _n:
             logging.info(
@@ -184,13 +176,13 @@ class NCUT(OnlineNystrom):
                 num_sample=self.num_sample,
                 sample_method=self.sample_method,
             )
-        sampled_features = features[sampled_indices].to(device)
+        sampled_features = features[sampled_indices]
         OnlineNystrom.fit(self, sampled_features)
 
         _n_not_sampled = _n - len(sampled_features)
         if _n_not_sampled > 0:
-            unsampled_indices = torch.full((_n,), True).scatter(0, sampled_indices, False)
-            unsampled_features = features[unsampled_indices].to(device)
+            unsampled_indices = torch.full((_n,), True, device=features.device).scatter_(0, sampled_indices, False)
+            unsampled_features = features[unsampled_indices]
             V_unsampled, _ = OnlineNystrom.update(self, unsampled_features)
         else:
             unsampled_indices = V_unsampled = None
@@ -231,7 +223,7 @@ class NCUT(OnlineNystrom):
         V_sampled, L = OnlineNystrom.transform(self)
 
         if unsampled_indices is not None:
-            V = torch.zeros((len(unsampled_indices), self.n_components))
+            V = torch.zeros((len(unsampled_indices), self.n_components), device=features.device)
             V[~unsampled_indices] = V_sampled
             V[unsampled_indices] = V_unsampled
         else:
