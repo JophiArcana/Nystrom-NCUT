@@ -4,3 +4,4 @@ umap-learn
 fpsample>=0.3.2
 pycolormap-2d
 tqdm
+torch

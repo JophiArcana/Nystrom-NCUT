@@ -2,6 +2,8 @@ from typing import Literal, Tuple
 
 import torch
 
+from .common import ceildiv
+
 
 EigSolverOptions = Literal["svd_lowrank", "lobpcg", "svd", "eigh"]
 
@@ -75,7 +77,7 @@ class OnlineNystrom:
         return U[:, :self.n_components], L[:self.n_components]                                      # [n x n_components], [n_components]
 
     def update(self, features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        n_chunks = -(-len(features) // self.chunk_size)
+        n_chunks = ceildiv(len(features), self.chunk_size)
         if n_chunks > 1:
             """ Chunked version """
             chunks = torch.chunk(features, n_chunks, dim=0)
@@ -111,7 +113,7 @@ class OnlineNystrom:
         if features is None:
             VS = self.A @ self.transform_matrix                                                     # [n x n_components]
         else:
-            n_chunks = -(-len(features) // self.chunk_size)
+            n_chunks = ceildiv(len(features), self.chunk_size)
             if n_chunks > 1:
                 """ Chunked version """
                 chunks = torch.chunk(features, n_chunks, dim=0)

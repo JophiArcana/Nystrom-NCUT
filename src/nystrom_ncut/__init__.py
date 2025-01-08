@@ -1,4 +1,7 @@
-from .ncut_pytorch import NCUT
+from .ncut_pytorch import (
+    NCUT,
+    axis_align,
+)
 from .propagation_utils import (
     affinity_from_features,
     propagate_eigenvectors,
@@ -6,7 +9,6 @@ from .propagation_utils import (
     quantile_normalize,
 )
 from .visualize_utils import (
-    eigenvector_to_rgb,
     rgb_from_tsne_3d,
     rgb_from_umap_sphere,
     rgb_from_tsne_2d,
@@ -18,5 +20,3 @@ from .visualize_utils import (
     propagate_rgb_color,
     get_mask,
 )
-from .ncut_pytorch import nystrom_ncut, ncut
-from .ncut_pytorch import kway_ncut, axis_align

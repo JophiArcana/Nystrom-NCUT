@@ -1,10 +1,11 @@
 import logging
-import math
 from typing import Literal
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+
+from .common import ceildiv, lazy_normalize
 
 
 @torch.no_grad()
@@ -60,14 +61,12 @@ def farthest_point_sampling(
     # PCA to reduce the dimension
     if features.shape[1] > 8:
         u, s, v = torch.pca_lowrank(features, q=8)
-        _n = features.shape[0]
-        s /= math.sqrt(_n)
         features = u @ torch.diag(s)
 
     h = min(h, int(np.log2(features.shape[0])))
 
     kdline_fps_samples_idx = fpsample.bucket_fps_kdline_sampling(
-        features.cpu().numpy(), num_sample, h
+        features.numpy(force=True), num_sample, h
     ).astype(np.int64)
     return torch.from_numpy(kdline_fps_samples_idx)
 
@@ -76,26 +75,19 @@ def distance_from_features(
     features: torch.Tensor,
     features_B: torch.Tensor,
     distance: Literal["cosine", "euclidean", "rbf"],
-    fill_diagonal: bool,
 ):
     """Compute affinity matrix from input features.
     Args:
         features (torch.Tensor): input features, shape (n_samples, n_features)
         features_B (torch.Tensor, optional): optional, if not None, compute affinity between two features
-        affinity_focal_gamma (float): affinity matrix parameter, lower t reduce the edge weights
-            on weak connections, default 1.0
         distance (str): distance metric, 'cosine' (default) or 'euclidean', 'rbf'.
-        normalize_features (bool): normalize input features before computing affinity matrix
-
     Returns:
         (torch.Tensor): affinity matrix, shape (n_samples, n_samples)
     """
     # compute distance matrix from input features
     if distance == "cosine":
-        if not check_if_normalized(features):
-            features = F.normalize(features, dim=-1)
-        if not check_if_normalized(features_B):
-            features_B = F.normalize(features_B, dim=-1)
+        features = lazy_normalize(features, dim=-1)
+        features_B = lazy_normalize(features_B, dim=-1)
         D = 1 - features @ features_B.T
     elif distance == "euclidean":
         D = torch.cdist(features, features_B, p=2)
@@ -105,8 +97,6 @@ def distance_from_features(
     else:
         raise ValueError("distance should be 'cosine' or 'euclidean', 'rbf'")
 
-    if fill_diagonal:
-        D[torch.arange(D.shape[0]), torch.arange(D.shape[0])] = 0
     return D
 
 
@@ -115,7 +105,6 @@ def affinity_from_features(
     features_B: torch.Tensor = None,
     affinity_focal_gamma: float = 1.0,
     distance: Literal["cosine", "euclidean", "rbf"] = "cosine",
-    fill_diagonal: bool = True,
 ):
     """Compute affinity matrix from input features.
 
@@ -125,8 +114,6 @@ def affinity_from_features(
         affinity_focal_gamma (float): affinity matrix parameter, lower t reduce the edge weights
             on weak connections, default 1.0
         distance (str): distance metric, 'cosine' (default) or 'euclidean', 'rbf'.
-        normalize_features (bool): normalize input features before computing affinity matrix
-
     Returns:
         (torch.Tensor): affinity matrix, shape (n_samples, n_samples)
     """
@@ -134,12 +121,10 @@ def affinity_from_features(
 
     # if feature_B is not provided, compute affinity matrix on features x features
     # if feature_B is provided, compute affinity matrix on features x feature_B
-    if features_B is not None:
-        assert not fill_diagonal, "fill_diagonal should be False when feature_B is None"
     features_B = features if features_B is None else features_B
 
     # compute distance matrix from input features
-    D = distance_from_features(features, features_B, distance, fill_diagonal)
+    D = distance_from_features(features, features_B, distance)
 
     # torch.exp make affinity matrix positive definite,
     # lower affinity_focal_gamma reduce the weak edge weights
@@ -156,7 +141,6 @@ def propagate_knn(
     affinity_focal_gamma: float = 1.0,
     chunk_size: int = 8096,
     device: str = None,
-    use_tqdm: bool = False,
     move_output_to_cpu: bool = False,
 ):
     """A generic function to propagate new nodes using KNN.
@@ -169,8 +153,6 @@ def propagate_knn(
         distance (str): distance metric, 'cosine' (default) or 'euclidean', 'rbf'
         chunk_size (int): chunk size for matrix multiplication
         device (str): device to use for computation, if None, will not change device
-        use_tqdm (bool): show progress bar when propagating eigenvectors from subgraph to full graph
-
     Returns:
         torch.Tensor: propagated eigenvectors, shape (new_num_samples, D)
 
@@ -197,24 +179,16 @@ def propagate_knn(
     # used in nystrom_ncut
     # propagate eigen_vector from subgraph to full graph
     subgraph_output = subgraph_output.to(device)
-    V_list = []
-    iterator = range(0, inp_features.shape[0], chunk_size)
-    try:
-        assert use_tqdm
-        from tqdm import tqdm
-        iterator = tqdm(iterator, "propagate by KNN")
-    except (AssertionError, ImportError):
-        pass
 
-    subgraph_features = subgraph_features.to(device)
-    for i in iterator:
-        end = min(i + chunk_size, inp_features.shape[0])
-        _v = inp_features[i:end].to(device)
-        _A = affinity_from_features(subgraph_features, _v, affinity_focal_gamma, distance, False).mT
+    n_chunks = ceildiv(inp_features.shape[0], chunk_size)
+    V_list = []
+    for _v in torch.chunk(inp_features, n_chunks, dim=0):
+        _v = _v.to(device)
+        _A = affinity_from_features(subgraph_features, _v, affinity_focal_gamma, distance).mT
 
         if knn is not None:
             mask = torch.full_like(_A, True, dtype=torch.bool)
-            mask[torch.arange(end - i)[:, None], _A.topk(knn, dim=-1, largest=True).indices] = False
+            mask[torch.arange(len(_v))[:, None], _A.topk(knn, dim=-1, largest=True).indices] = False
             _A[mask] = 0.0
         _A = F.normalize(_A, p=1, dim=-1)
 
@@ -238,10 +212,8 @@ def propagate_nearest(
 ):
     device = subgraph_output.device if device is None else device
     if distance == 'cosine':
-        if not check_if_normalized(inp_features):
-            inp_features = F.normalize(inp_features, dim=-1)
-        if not check_if_normalized(subgraph_features):
-            subgraph_features = F.normalize(subgraph_features, dim=-1)
+        inp_features = lazy_normalize(inp_features, dim=-1)
+        subgraph_features = lazy_normalize(subgraph_features, dim=-1)
 
     # used in nystrom_tsne, equivalent to propagate_by_knn with knn=1
     # propagate tSNE from subgraph to full graph
@@ -250,7 +222,7 @@ def propagate_nearest(
     for i in range(0, inp_features.shape[0], chunk_size):
         end = min(i + chunk_size, inp_features.shape[0])
         _v = inp_features[i:end].to(device)
-        _A = -distance_from_features(subgraph_features, _v, distance, False).mT
+        _A = -distance_from_features(subgraph_features, _v, distance).mT
 
         # keep top1 for each row
         top_idx = _A.argmax(dim=-1).cpu()
@@ -273,7 +245,6 @@ def propagate_eigenvectors(
     sample_method: Literal["farthest", "random"],
     chunk_size: int,
     device: str,
-    use_tqdm: bool,
 ):
     """Propagate eigenvectors to new nodes using KNN. Note: this is equivalent to the class API `NCUT.tranform(new_features)`, expect for the sampling is re-done in this function.
     Args:
@@ -285,8 +256,6 @@ def propagate_eigenvectors(
         sample_method (str): sample method, 'farthest' (default) or 'random'
         chunk_size (int): chunk size for matrix multiplication, default 8096
         device (str): device to use for computation, if None, will not change device
-        use_tqdm (bool): show progress bar when propagating eigenvectors from subgraph to full graph
-
     Returns:
         torch.Tensor: propagated eigenvectors, shape (n_new_samples, num_eig)
 
@@ -319,19 +288,8 @@ def propagate_eigenvectors(
         knn=knn,
         chunk_size=chunk_size,
         device=device,
-        use_tqdm=use_tqdm,
     )
-
     return new_eigenvectors
-
-
-def check_if_normalized(x, n=1000):
-    """check if the input tensor is normalized (unit norm)"""
-    n = min(n, x.shape[0])
-    random_indices = torch.randperm(x.shape[0])[:n]
-    _x = x[random_indices]
-    flag = torch.allclose(torch.norm(_x, dim=-1), torch.ones(n, device=x.device))
-    return flag
 
 
 def quantile_min_max(x, q1=0.01, q2=0.99, n_sample=10000):

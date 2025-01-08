@@ -6,11 +6,11 @@ import torch
 import torch.nn.functional as F
 from sklearn.base import BaseEstimator
 
+from .common import lazy_normalize
 from .propagation_utils import (
     run_subgraph_sampling,
     propagate_knn,
     propagate_eigenvectors,
-    check_if_normalized,
     quantile_min_max,
     quantile_normalize
 )
@@ -18,75 +18,6 @@ from .propagation_utils import (
 
 def _identity(X: torch.Tensor) -> torch.Tensor:
     return X
-
-
-def eigenvector_to_rgb(
-    eigen_vector: torch.Tensor,
-    method: Literal["tsne_2d", "tsne_3d", "umap_sphere", "umap_2d", "umap_3d"] = "tsne_3d",
-    num_sample: int = 1000,
-    perplexity: int = 150,
-    n_neighbors: int = 150,
-    min_distance: float = 0.1,
-    metric: Literal["cosine", "euclidean"] = "cosine",
-    device: str = None,
-    q: float = 0.95,
-    knn: int = 10,
-    seed: int = 0,
-):
-    """Use t-SNE or UMAP to convert eigenvectors (more than 3) to RGB color (3D RGB CUBE).
-
-    Args:
-        eigen_vector (torch.Tensor): eigenvectors, shape (n_samples, num_eig)
-        method (str): method to convert eigenvectors to RGB,
-            choices are: ['tsne_2d', 'tsne_3d', 'umap_sphere', 'umap_2d', 'umap_3d']
-        num_sample (int): number of samples for Nystrom-like approximation, increase for better approximation
-        perplexity (int): perplexity for t-SNE, increase for more global structure
-        n_neighbors (int): number of neighbors for UMAP, increase for more global structure
-        min_distance (float): minimum distance for UMAP
-        metric (str): distance metric, default 'cosine'
-        device (str): device to use for computation, if None, will not change device
-        q (float): quantile for RGB normalization, default 0.95. lower q results in more sharp colors
-        knn (int): number of KNN for propagating eigenvectors from subgraph to full graph,
-            smaller knn result in more sharp colors, default 1. knn>1 will smooth-out the embedding
-            in the t-SNE or UMAP space.
-        seed (int): random seed for t-SNE or UMAP
-
-    Examples:
-        >>> from ncut_pytorch import eigenvector_to_rgb
-        >>> X_3d, rgb = eigenvector_to_rgb(eigenvectors, method='tsne_3d')
-        >>> print(X_3d.shape, rgb.shape)
-        >>> # (10000, 3) (10000, 3)
-
-    Returns:
-        (torch.Tensor): t-SNE or UMAP embedding, shape (n_samples, 2) or (n_samples, 3)
-        (torch.Tensor): RGB color for each data sample, shape (n_samples, 3)
-    """
-    kwargs = {
-        "num_sample": num_sample,
-        "perplexity": perplexity,
-        "n_neighbors": n_neighbors,
-        "min_distance": min_distance,
-        "metric": metric,
-        "device": device,
-        "q": q,
-        "knn": knn,
-        "seed": seed,
-    }
-
-    if method == "tsne_2d":
-        embed, rgb = rgb_from_tsne_2d(eigen_vector, **kwargs)
-    elif method == "tsne_3d":
-        embed, rgb = rgb_from_tsne_3d(eigen_vector, **kwargs)
-    elif method == "umap_sphere":
-        embed, rgb = rgb_from_umap_sphere(eigen_vector, **kwargs)
-    elif method == "umap_2d":
-        embed, rgb = rgb_from_umap_2d(eigen_vector, **kwargs)
-    elif method == "umap_3d":
-        embed, rgb = rgb_from_umap_3d(eigen_vector, **kwargs)
-    else:
-        raise ValueError("method should be 'tsne_2d', 'tsne_3d' or 'umap_sphere'")
-
-    return embed, rgb
 
 
 def _rgb_with_dimensionality_reduction(
@@ -126,7 +57,7 @@ def _rgb_with_dimensionality_reduction(
         move_output_to_cpu=True,
     ))
     rgb = rgb_func(X_nd, q)
-    return X_nd.numpy(force=True), rgb
+    return X_nd, rgb
 
 
 def rgb_from_tsne_2d(
@@ -138,7 +69,6 @@ def rgb_from_tsne_2d(
     seed: int = 0,
     q: float = 0.95,
     knn: int = 10,
-    **kwargs: Any,
 ):
     """
     Returns:
@@ -169,7 +99,6 @@ def rgb_from_tsne_2d(
             "perplexity": perplexity,
         },
     )
-    
     return x2d, rgb
 
 
@@ -182,7 +111,6 @@ def rgb_from_tsne_3d(
     seed: int = 0,
     q: float = 0.95,
     knn: int = 10,
-    **kwargs: Any,
 ):
     """
     Returns:
@@ -213,7 +141,6 @@ def rgb_from_tsne_3d(
             "perplexity": perplexity,
         },
     )
-
     return x3d, rgb
 
 
@@ -225,7 +152,6 @@ def rgb_from_cosine_tsne_3d(
     seed: int = 0,
     q: float = 0.95,
     knn: int = 10,
-    **kwargs: Any,
 ):
     """
     Returns:
@@ -272,7 +198,6 @@ def rgb_from_cosine_tsne_3d(
             "perplexity": perplexity,
         },
     )
-    
     return x3d, rgb
 
 
@@ -286,7 +211,6 @@ def rgb_from_umap_2d(
     seed: int = 0,
     q: float = 0.95,
     knn: int = 10,
-    **kwargs: Any,
 ):
     """
     Returns:
@@ -310,7 +234,6 @@ def rgb_from_umap_2d(
             "min_dist": min_dist,
         },
     )
-    
     return x2d, rgb
 
 
@@ -324,7 +247,6 @@ def rgb_from_umap_sphere(
     seed: int = 0,
     q: float = 0.95,
     knn: int = 10,
-    **kwargs: Any,
 ):
     """
     Returns:
@@ -357,7 +279,6 @@ def rgb_from_umap_sphere(
         },
         transform_func=transform_func
     )
-    
     return x3d, rgb
 
 
@@ -371,7 +292,6 @@ def rgb_from_umap_3d(
     seed: int = 0,
     q: float = 0.95,
     knn: int = 10,
-    **kwargs: Any,
 ):
     """
     Returns:
@@ -395,7 +315,6 @@ def rgb_from_umap_3d(
             "min_dist": min_dist,
         },
     )
-    
     return x3d, rgb
 
 
@@ -417,13 +336,11 @@ def rotate_rgb_cube(rgb, position=1):
         torch.Tensor: RGB color space, shape (n_samples, 3)
     """
     assert position in range(0, 7), "position should be 0, 1, 2, 3, 4, 5, 6"
-    rotation_matrix = torch.tensor(
-        [
-            [0, 1, 0],
-            [0, 0, 1],
-            [1, 0, 0],
-        ]
-    ).float()
+    rotation_matrix = torch.tensor((
+        (0., 1., 0.),
+        (0., 0., 1.),
+        (1., 0., 0.),
+    ))
     n_mul = position % 3
     rotation_matrix = torch.matrix_power(rotation_matrix, n_mul)
     rgb = rgb @ rotation_matrix
@@ -505,7 +422,6 @@ def propagate_rgb_color(
     sample_method: Literal["farthest", "random"] = "farthest",
     chunk_size: int = 8096,
     device: str = None,
-    use_tqdm: bool = False,
 ):
     """Propagate RGB color to new nodes using KNN.
     Args:
@@ -517,8 +433,6 @@ def propagate_rgb_color(
         sample_method (str): sample method, 'farthest' (default) or 'random'
         chunk_size (int): chunk size for matrix multiplication, default 8096
         device (str): device to use for computation, if None, will not change device
-        use_tqdm (bool): show progress bar when propagating RGB color from subgraph to full graph
-
     Returns:
         torch.Tensor: propagated RGB color for each data sample, shape (n_new_samples, 3)
 
@@ -538,7 +452,6 @@ def propagate_rgb_color(
         sample_method=sample_method,
         chunk_size=chunk_size,
         device=device,
-        use_tqdm=use_tqdm,
     )
 
 
@@ -627,9 +540,7 @@ def get_mask(
     """
 
     # normalize the eigenvectors to unit norm, to compute cosine similarity
-    if not check_if_normalized(all_eigvecs.reshape(-1, all_eigvecs.shape[-1])):
-        all_eigvecs = F.normalize(all_eigvecs, p=2, dim=-1)
-
+    all_eigvecs = lazy_normalize(all_eigvecs, p=2, dim=-1)
     prompt_eigvec = F.normalize(prompt_eigvec, p=2, dim=-1)
 
     # compute the cosine similarity
@@ -642,7 +553,7 @@ def get_mask(
     heatmap = _transform_heatmap(heatmap, gamma=gamma)
 
     masks = heatmap > threshold
-    masks = masks.cpu().numpy().astype(np.uint8)
+    masks = masks.numpy(force=True).astype(np.uint8)
 
     if denoise:
         cleaned_masks = []
