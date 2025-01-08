@@ -1,5 +1,7 @@
 import numpy as np
 import torch
+import torch.nn.functional as Fn
+
 from src.nystrom_ncut.ncut_pytorch import NCUT, axis_align
 # from ncut_pytorch.src import rgb_from_umap_sphere
 # from ncut_pytorch.src.new_ncut_pytorch import NewNCUT
@@ -35,28 +37,36 @@ if __name__ == "__main__":
     # # ))
     # raise Exception(
 
-    torch.set_printoptions(precision=12, sci_mode=False, linewidth=400)
-    torch.manual_seed(1212)
-    np.random.seed(1212)
+    torch.set_printoptions(precision=8, sci_mode=False, linewidth=400)
+    torch.set_default_dtype(torch.float64)
+    # torch.manual_seed(1212)
+    # np.random.seed(1212)
 
-    M = torch.rand((10000, 12))
-    # NC = NCUT(num_eig=5, knn=None, verbose=True)
-    kwargs = dict(num_eig=7, sample_method="random")
-    nNC = NCUT(**kwargs)
-
-    torch.manual_seed(1212)
-    np.random.seed(1212)
-    nX, neigs = nNC.fit_transform(M)
-    # print(neigs)
-    # print(nX.mT @ nX)
+    M = torch.rand((200, 12))
+    NC = NCUT(n_components=12, num_sample=80, sample_method="random", chunk_size=20)
 
     torch.manual_seed(1212)
     np.random.seed(1212)
+    X, eigs = NC.fit_transform(M)
+    print(eigs)
+    raise Exception()
 
-    aX, R = axis_align(nX)
-    print(aX[:3])
-    print(R)
-    print(R @ R.mT)
+    normalized_M = Fn.normalize(M, p=2, dim=-1)
+    A = torch.exp(-(1 - normalized_M @ normalized_M.mT))
+    R = torch.diag(torch.sum(A, dim=-1) ** -0.5)
+    L = R @ A @ R
+    # print(L)
+    print(X @ torch.diag(eigs) @ X.mT)
+    print(L)
+    print(torch.abs(X @ torch.diag(eigs) @ X.mT / L - 1))
+
+    # torch.manual_seed(1212)
+    # np.random.seed(1212)
+    #
+    # aX, R = axis_align(X)
+    # print(aX[:3])
+    # print(R)
+    # print(R @ R.mT)
     raise Exception()
 
 

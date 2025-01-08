@@ -52,17 +52,8 @@ class OnlineNystrom:
         self.transform_matrix: torch.Tensor = None  # [n x n_components]
         self.LS: torch.Tensor = None                # [n]
 
-    def fit(self, features: torch.Tensor):
-        OnlineNystrom.fit_transform(self, features)
-        return self
-
-    def fit_transform(self, features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        self.anchor_features = features
-
-        self.kernel.fit(self.anchor_features)
-        self.A = self.S = self.kernel.transform()                                                   # [n x n]
-
-        self.inverse_approximation_dim = max(self.n_components, features.shape[-1]) + 1
+    def _update_to_kernel(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        self.A = self.S = self.kernel.transform()
         U, L = solve_eig(
             self.A,
             num_eig=self.inverse_approximation_dim,
@@ -71,6 +62,18 @@ class OnlineNystrom:
         self.Ahinv_UL = U * (L ** -0.5)                                                             # [n x (? + 1)]
         self.Ahinv_VT = U.mT                                                                        # [(? + 1) x n]
         self.Ahinv = self.Ahinv_UL @ self.Ahinv_VT                                                  # [n x n]
+        return U, L
+
+    def fit(self, features: torch.Tensor):
+        OnlineNystrom.fit_transform(self, features)
+        return self
+
+    def fit_transform(self, features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        self.anchor_features = features
+
+        self.kernel.fit(self.anchor_features)
+        self.inverse_approximation_dim = max(self.n_components, features.shape[-1]) + 1
+        U, L = self._update_to_kernel()                                                             # [n x (? + 1)], [? + 1]
 
         self.transform_matrix = (U / L)[:, :self.n_components]                                      # [n x n_components]
         self.LS = L[:self.n_components]                                                             # [n_components]
@@ -83,6 +86,7 @@ class OnlineNystrom:
             chunks = torch.chunk(features, n_chunks, dim=0)
             for chunk in chunks:
                 self.kernel.update(chunk)
+            self._update_to_kernel()
 
             compressed_BBT = torch.zeros((self.inverse_approximation_dim, self.inverse_approximation_dim))  # [(? + 1) x (? + 1))]
             for i, chunk in enumerate(chunks):
@@ -101,6 +105,7 @@ class OnlineNystrom:
         else:
             """ Unchunked version """
             B = self.kernel.update(features).mT                                                         # [n x m]
+            self._update_to_kernel()
             compressed_B = self.Ahinv_VT @ B                                                            # [indirect_pca_dim x m]
 
             self.S = self.S + self.Ahinv_UL @ (compressed_B @ compressed_B.mT) @ self.Ahinv_UL.mT       # [n x n]

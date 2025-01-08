@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: nystrom_ncut
-Version: 0.0.2
+Version: 0.0.3
 Summary: Normalized Cut and Nyström Approximation
 Author-email: Huzheng Yang <huze.yann@gmail.com>, Wentinn Liao <wentinn.liao@gmail.com>
 Project-URL: Documentation, https://github.com/JophiArcana/Nystrom-NCUT/
