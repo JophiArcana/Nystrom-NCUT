@@ -7,15 +7,13 @@ import torch.nn.functional as F
 from sklearn.base import BaseEstimator
 
 from .common import (
-    DistanceOptions,
     lazy_normalize,
+    quantile_min_max,
+    quantile_normalize,
 )
 from .propagation_utils import (
     run_subgraph_sampling,
     extrapolate_knn,
-    extrapolate_knn_with_subsampling,
-    quantile_min_max,
-    quantile_normalize
 )
 
 
@@ -28,22 +26,22 @@ def _rgb_with_dimensionality_reduction(
     num_sample: int,
     metric: Literal["cosine", "euclidean"],
     rgb_func: Callable[[torch.Tensor, float], torch.Tensor],
-    q: float, knn: int,
-    seed: int, device: str,
+    q: float,
+    knn: int,
     reduction: Callable[..., BaseEstimator],
     reduction_dim: int,
     reduction_kwargs: Dict[str, Any],
-    transform_func: Callable[[torch.Tensor], torch.Tensor] = _identity,
-    pre_smooth: bool = True,
+    transform_func: Callable[[torch.Tensor], torch.Tensor],
+    seed: int,
+    device: str,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
 
-    if pre_smooth:
-        features = extrapolate_knn(
-            features,
-            features,
-            features,
-            distance="cosine",
-        )
+    features = extrapolate_knn(
+        features,
+        features,
+        features,
+        distance="cosine",
+    )
 
     subgraph_indices = run_subgraph_sampling(
         features,
@@ -78,10 +76,10 @@ def rgb_from_tsne_2d(
     num_sample: int = 1000,
     perplexity: int = 150,
     metric: Literal["cosine", "euclidean"] = "cosine",
-    device: str = None,
-    seed: int = 0,
     q: float = 0.95,
     knn: int = 10,
+    seed: int = 0,
+    device: str = None,
 ):
     """
     Returns:
@@ -106,11 +104,13 @@ def rgb_from_tsne_2d(
         num_sample=num_sample,
         metric=metric,
         rgb_func=rgb_from_2d_colormap,
-        q=q, knn=knn,
-        seed=seed, device=device,
+        q=q,
+        knn=knn,
         reduction=TSNE, reduction_dim=2, reduction_kwargs={
             "perplexity": perplexity,
-        },
+        }, transform_func=_identity,
+        seed=seed,
+        device=device,
     )
     return x2d, rgb
 
@@ -120,10 +120,10 @@ def rgb_from_tsne_3d(
     num_sample: int = 1000,
     perplexity: int = 150,
     metric: Literal["cosine", "euclidean"] = "cosine",
-    device: str = None,
-    seed: int = 0,
     q: float = 0.95,
     knn: int = 10,
+    seed: int = 0,
+    device: str = None,
 ):
     """
     Returns:
@@ -148,11 +148,13 @@ def rgb_from_tsne_3d(
         num_sample=num_sample,
         metric=metric,
         rgb_func=rgb_from_3d_rgb_cube,
-        q=q, knn=knn,
-        seed=seed, device=device,
+        q=q,
+        knn=knn,
         reduction=TSNE, reduction_dim=3, reduction_kwargs={
             "perplexity": perplexity,
-        },
+        }, transform_func=_identity,
+        seed=seed,
+        device=device,
     )
     return x3d, rgb
 
@@ -161,10 +163,10 @@ def rgb_from_cosine_tsne_3d(
     features: torch.Tensor,
     num_sample: int = 1000,
     perplexity: int = 150,
-    device: str = None,
-    seed: int = 0,
     q: float = 0.95,
     knn: int = 10,
+    seed: int = 0,
+    device: str = None
 ):
     """
     Returns:
@@ -205,11 +207,13 @@ def rgb_from_cosine_tsne_3d(
         num_sample=num_sample,
         metric="cosine",
         rgb_func=rgb_from_cosine,
-        q=q, knn=knn,
-        seed=seed, device=device,
+        q=q,
+        knn=knn,
         reduction=TSNE, reduction_dim=3, reduction_kwargs={
             "perplexity": perplexity,
-        },
+        }, transform_func=_identity,
+        seed=seed,
+        device=device,
     )
     return x3d, rgb
 
@@ -220,10 +224,10 @@ def rgb_from_umap_2d(
     n_neighbors: int = 150,
     min_dist: float = 0.1,
     metric: Literal["cosine", "euclidean"] = "cosine",
-    device: str = None,
-    seed: int = 0,
     q: float = 0.95,
     knn: int = 10,
+    seed: int = 0,
+    device: str = None,
 ):
     """
     Returns:
@@ -240,12 +244,14 @@ def rgb_from_umap_2d(
         num_sample=num_sample,
         metric=metric,
         rgb_func=rgb_from_2d_colormap,
-        q=q, knn=knn,
-        seed=seed, device=device,
+        q=q,
+        knn=knn,
         reduction=UMAP, reduction_dim=2, reduction_kwargs={
             "n_neighbors": n_neighbors,
             "min_dist": min_dist,
-        },
+        }, transform_func=_identity,
+        seed=seed,
+        device=device,
     )
     return x2d, rgb
 
@@ -256,10 +262,10 @@ def rgb_from_umap_sphere(
     n_neighbors: int = 150,
     min_dist: float = 0.1,
     metric: Literal["cosine", "euclidean"] = "cosine",
-    device: str = None,
-    seed: int = 0,
     q: float = 0.95,
     knn: int = 10,
+    seed: int = 0,
+    device: str = None,
 ):
     """
     Returns:
@@ -283,14 +289,15 @@ def rgb_from_umap_sphere(
         num_sample=num_sample,
         metric=metric,
         rgb_func=rgb_from_3d_rgb_cube,
-        q=q, knn=knn,
-        seed=seed, device=device,
+        q=q,
+        knn=knn,
         reduction=UMAP, reduction_dim=2, reduction_kwargs={
             "n_neighbors": n_neighbors,
             "min_dist": min_dist,
             "output_metric": "haversine",
-        },
-        transform_func=transform_func
+        }, transform_func=transform_func,
+        seed=seed,
+        device=device,
     )
     return x3d, rgb
 
@@ -301,10 +308,10 @@ def rgb_from_umap_3d(
     n_neighbors: int = 150,
     min_dist: float = 0.1,
     metric: Literal["cosine", "euclidean"] = "cosine",
-    device: str = None,
-    seed: int = 0,
     q: float = 0.95,
     knn: int = 10,
+    seed: int = 0,
+    device: str = None,
 ):
     """
     Returns:
@@ -321,12 +328,14 @@ def rgb_from_umap_3d(
         num_sample=num_sample,
         metric=metric,
         rgb_func=rgb_from_3d_rgb_cube,
-        q=q, knn=knn,
-        seed=seed, device=device,
+        q=q,
+        knn=knn,
         reduction=UMAP, reduction_dim=3, reduction_kwargs={
             "n_neighbors": n_neighbors,
             "min_dist": min_dist,
-        },
+        }, transform_func=_identity,
+        seed=seed,
+        device=device,
     )
     return x3d, rgb
 

@@ -2,7 +2,9 @@ from typing import Literal, Tuple
 
 import torch
 
-from .common import ceildiv
+from .common import (
+    ceildiv,
+)
 
 
 EigSolverOptions = Literal["svd_lowrank", "lobpcg", "svd", "eigh"]
