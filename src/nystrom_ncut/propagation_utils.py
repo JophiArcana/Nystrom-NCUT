@@ -98,7 +98,11 @@ def distance_from_features(
         D = torch.cdist(features, features_B, p=2)
     elif distance == "rbf":
         D = torch.cdist(features, features_B, p=2) ** 2
-        D = D / (2 * features.var(dim=0).sum())
+
+        # Outlier-robust scale invariance using quantiles to estimate standard deviation
+        stds = torch.quantile(features, q=torch.tensor((0.158655, 0.841345), device=features.device), dim=0)
+        stds = (stds[1] - stds[0]) / 2
+        D = D / (2 * torch.linalg.norm(stds) ** 2)
     else:
         raise ValueError("distance should be 'cosine' or 'euclidean', 'rbf'")
     return D
@@ -178,39 +182,17 @@ def extrapolate_knn(
     V_list = []
     for _v in torch.chunk(extrapolation_features, n_chunks, dim=0):
         _v = _v.to(device)                                                                              # [_m x d]
+
         _A = affinity_from_features(anchor_features, _v, affinity_focal_gamma, distance).mT             # [_m x n]
         if knn is not None:
             _A, indices = _A.topk(k=knn, dim=-1, largest=True)                                          # [_m x k], [_m x k]
             _anchor_output = anchor_output[indices]                                                     # [_m x k x d]
         else:
             _anchor_output = anchor_output[None]                                                        # [1 x n x d]
-        _A = Fn.normalize(_A, p=1, dim=-1)
 
-        # if distance == 'cosine':
-        #     _A = _v @ subgraph_features.T
-        # elif distance == 'euclidean':
-        #     _A = - torch.cdist(_v, subgraph_features, p=2)
-        # elif distance == 'rbf':
-        #     _A = - torch.cdist(_v, subgraph_features, p=2) ** 2
-        # else:
-        #     raise ValueError("distance should be 'cosine' or 'euclidean', 'rbf'")
-        #
-        # # keep topk KNN for each row
-        # topk_sim, topk_idx = _A.topk(knn, dim=-1, largest=True)
-        # row_id = torch.arange(topk_idx.shape[0], device=_A.device)[:, None].expand(
-        #     -1, topk_idx.shape[1]
-        # )
-        # _A = torch.sparse_coo_tensor(
-        #     torch.stack([row_id, topk_idx], dim=-1).reshape(-1, 2).T,
-        #     topk_sim.reshape(-1),
-        #     size=(_A.shape[0], _A.shape[1]),
-        #     device=_A.device,
-        # )
-        # _A = _A.to_dense().to(dtype=subgraph_output.dtype)
-        # _D = _A.sum(-1)
-        # _A /= _D[:, None]
+        _A = Fn.normalize(_A, p=1, dim=-1)                                                              # [_m x k]
+        _V = (_A[:, None, :] @ _anchor_output).squeeze(1)                                               # [_m x d]
 
-        _V = (_A[:, None, :] @ _anchor_output).squeeze(1)
         if move_output_to_cpu:
             _V = _V.cpu()
         V_list.append(_V)
