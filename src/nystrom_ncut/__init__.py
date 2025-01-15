@@ -1,12 +1,11 @@
 from .ncut_pytorch import (
-    NCUT,
+    NCut,
     axis_align,
 )
 from .propagation_utils import (
     affinity_from_features,
     extrapolate_knn_with_subsampling,
     extrapolate_knn,
-    quantile_normalize,
 )
 from .visualize_utils import (
     rgb_from_tsne_3d,

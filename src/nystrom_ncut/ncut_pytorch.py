@@ -91,7 +91,7 @@ class LaplacianKernel(OnlineKernel):
         return (B * scale).mT                                   # [m x n]
 
 
-class NCUT(OnlineNystrom):
+class NCut(OnlineNystrom):
     """Nystrom Normalized Cut for large scale graph."""
 
     def __init__(
@@ -190,9 +190,9 @@ class NCUT(OnlineNystrom):
             precomputed_sampled_indices (torch.Tensor): precomputed sampled indices, shape (num_sample,)
                 override the sample_method, if not None
         Returns:
-            (NCUT): self
+            (NCut): self
         """
-        NCUT._fit_helper(self, features, precomputed_sampled_indices)
+        NCut._fit_helper(self, features, precomputed_sampled_indices)
         return self
 
     def fit_transform(
@@ -210,7 +210,7 @@ class NCUT(OnlineNystrom):
             (torch.Tensor): eigen_vectors, shape (n_samples, num_eig)
             (torch.Tensor): eigen_values, sorted in descending order, shape (num_eig,)
         """
-        unsampled_indices, V_unsampled = NCUT._fit_helper(self, features, precomputed_sampled_indices)
+        unsampled_indices, V_unsampled = NCut._fit_helper(self, features, precomputed_sampled_indices)
         V_sampled, L = OnlineNystrom.transform(self)
 
         if unsampled_indices is not None:
