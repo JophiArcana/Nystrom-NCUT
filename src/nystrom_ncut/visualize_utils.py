@@ -6,11 +6,14 @@ import torch
 import torch.nn.functional as F
 from sklearn.base import BaseEstimator
 
-from .common import lazy_normalize
+from .common import (
+    DistanceOptions,
+    lazy_normalize,
+)
 from .propagation_utils import (
     run_subgraph_sampling,
-    propagate_knn,
-    propagate_eigenvectors,
+    extrapolate_knn,
+    extrapolate_knn_with_subsampling,
     quantile_min_max,
     quantile_normalize
 )
@@ -31,14 +34,29 @@ def _rgb_with_dimensionality_reduction(
     reduction_dim: int,
     reduction_kwargs: Dict[str, Any],
     transform_func: Callable[[torch.Tensor], torch.Tensor] = _identity,
+    pre_smooth: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+
+    if pre_smooth:
+        _subgraph_indices = run_subgraph_sampling(
+            features,
+            num_sample,
+            sample_method="farthest",
+        )
+        features = extrapolate_knn(
+            features[_subgraph_indices],
+            features[_subgraph_indices],
+            features,
+            distance="cosine",
+        )
+
     subgraph_indices = run_subgraph_sampling(
         features,
         num_sample,
         sample_method="farthest",
     )
 
-    _inp = features[subgraph_indices].cpu().numpy()
+    _inp = features[subgraph_indices].numpy(force=True)
     _subgraph_embed = reduction(
         n_components=reduction_dim,
         metric=metric,
@@ -47,14 +65,14 @@ def _rgb_with_dimensionality_reduction(
     ).fit_transform(_inp)
 
     _subgraph_embed = torch.tensor(_subgraph_embed, dtype=torch.float32)
-    X_nd = transform_func(propagate_knn(
+    X_nd = transform_func(extrapolate_knn(
+        features[subgraph_indices],
         _subgraph_embed,
         features,
-        features[subgraph_indices],
-        distance=metric,
         knn=knn,
+        distance=metric,
         device=device,
-        move_output_to_cpu=True,
+        move_output_to_cpu=True
     ))
     rgb = rgb_func(X_nd, q)
     return X_nd, rgb
@@ -411,48 +429,6 @@ def rgb_from_2d_colormap(X_2d, q=0.95):
     rgb = cmap._cmap_data[x, y]
     rgb = torch.tensor(rgb, dtype=torch.float32) / 255
     return rgb
-
-
-def propagate_rgb_color(
-    rgb: torch.Tensor,
-    eigenvectors: torch.Tensor,
-    new_eigenvectors: torch.Tensor,
-    knn: int = 10,
-    num_sample: int = 1000,
-    sample_method: Literal["farthest", "random"] = "farthest",
-    chunk_size: int = 8192,
-    device: str = None,
-):
-    """Propagate RGB color to new nodes using KNN.
-    Args:
-        rgb (torch.Tensor): RGB color for each data sample, shape (n_samples, 3)
-        features (torch.Tensor): features from existing nodes, shape (n_samples, n_features)
-        new_features (torch.Tensor): features from new nodes, shape (n_new_samples, n_features)
-        knn (int): number of KNN to propagate RGB color, default 1
-        num_sample (int): number of samples for subgraph sampling, default 50000
-        sample_method (str): sample method, 'farthest' (default) or 'random'
-        chunk_size (int): chunk size for matrix multiplication, default 8192
-        device (str): device to use for computation, if None, will not change device
-    Returns:
-        torch.Tensor: propagated RGB color for each data sample, shape (n_new_samples, 3)
-
-    Examples:
-        >>> old_rgb = torch.randn(3000, 3)
-        >>> old_eigenvectors = torch.randn(3000, 20)
-        >>> new_eigenvectors = torch.randn(200, 20)
-        >>> new_rgb = propagate_rgb_color(old_rgb, new_eigenvectors, old_eigenvectors)
-        >>> # new_eigenvectors.shape = (200, 3)
-    """
-    return propagate_eigenvectors(
-        eigenvectors=rgb,
-        features=eigenvectors,
-        new_features=new_eigenvectors,
-        knn=knn,
-        num_sample=num_sample,
-        sample_method=sample_method,
-        chunk_size=chunk_size,
-        device=device,
-    )
 
 
 # application: get segmentation mask fron a reference eigenvector (point prompt)

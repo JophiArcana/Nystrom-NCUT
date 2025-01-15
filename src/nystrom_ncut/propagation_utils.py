@@ -3,9 +3,14 @@ from typing import Literal
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as Fn
 
-from .common import ceildiv, lazy_normalize
+from .common import (
+    DistanceOptions,
+    SampleOptions,
+    ceildiv,
+    lazy_normalize,
+)
 
 
 @torch.no_grad()
@@ -13,7 +18,7 @@ def run_subgraph_sampling(
     features: torch.Tensor,
     num_sample: int,
     max_draw: int = 1000000,
-    sample_method: Literal["farthest", "random"] = "farthest",
+    sample_method: SampleOptions = "farthest",
 ):
     if num_sample >= features.shape[0]:
         # if too many samples, use all samples and bypass Nystrom-like approximation
@@ -74,7 +79,7 @@ def farthest_point_sampling(
 def distance_from_features(
     features: torch.Tensor,
     features_B: torch.Tensor,
-    distance: Literal["cosine", "euclidean", "rbf"],
+    distance: DistanceOptions,
 ):
     """Compute affinity matrix from input features.
     Args:
@@ -103,7 +108,7 @@ def affinity_from_features(
     features: torch.Tensor,
     features_B: torch.Tensor = None,
     affinity_focal_gamma: float = 1.0,
-    distance: Literal["cosine", "euclidean", "rbf"] = "cosine",
+    distance: DistanceOptions = "cosine",
 ):
     """Compute affinity matrix from input features.
 
@@ -131,23 +136,23 @@ def affinity_from_features(
     return A
 
 
-def propagate_knn(
-    subgraph_output: torch.Tensor,
-    inp_features: torch.Tensor,
-    subgraph_features: torch.Tensor,
-    knn: int = 10,
-    distance: Literal["cosine", "euclidean", "rbf"] = "cosine",
+def extrapolate_knn(
+    anchor_features: torch.Tensor,          # [n x d]
+    anchor_output: torch.Tensor,            # [n x d']
+    extrapolation_features: torch.Tensor,   # [m x d]
+    knn: int = 10,                          # k
+    distance: DistanceOptions = "cosine",
     affinity_focal_gamma: float = 1.0,
     chunk_size: int = 8192,
     device: str = None,
-    move_output_to_cpu: bool = False,
-):
+    move_output_to_cpu: bool = False
+) -> torch.Tensor:                          # [m x d']
     """A generic function to propagate new nodes using KNN.
 
     Args:
-        subgraph_output (torch.Tensor): output from subgraph, shape (num_sample, D)
-        inp_features (torch.Tensor): features from existing nodes, shape (new_num_samples, n_features)
-        subgraph_features (torch.Tensor): features from subgraph, shape (num_sample, n_features)
+        anchor_features (torch.Tensor): features from subgraph, shape (num_sample, n_features)
+        anchor_output (torch.Tensor): output from subgraph, shape (num_sample, D)
+        extrapolation_features (torch.Tensor): features from existing nodes, shape (new_num_samples, n_features)
         knn (int): number of KNN to propagate eige nvectors
         distance (str): distance metric, 'cosine' (default) or 'euclidean', 'rbf'
         chunk_size (int): chunk size for matrix multiplication
@@ -159,121 +164,77 @@ def propagate_knn(
         >>> old_eigenvectors = torch.randn(3000, 20)
         >>> old_features = torch.randn(3000, 100)
         >>> new_features = torch.randn(200, 100)
-        >>> new_eigenvectors = propagate_knn(old_eigenvectors, new_features, old_features, knn=3)
+        >>> new_eigenvectors = extrapolate_knn(old_features,old_eigenvectors,new_features,knn=3)
         >>> # new_eigenvectors.shape = (200, 20)
 
     """
-    device = subgraph_output.device if device is None else device
-
-    if knn == 1:
-        return propagate_nearest(
-            subgraph_output,
-            inp_features,
-            subgraph_features,
-            chunk_size=chunk_size,
-            device=device,
-            move_output_to_cpu=move_output_to_cpu,
-        )
+    device = anchor_output.device if device is None else device
 
     # used in nystrom_ncut
     # propagate eigen_vector from subgraph to full graph
-    subgraph_output = subgraph_output.to(device)
+    anchor_output = anchor_output.to(device)
 
-    n_chunks = ceildiv(inp_features.shape[0], chunk_size)
+    n_chunks = ceildiv(extrapolation_features.shape[0], chunk_size)
     V_list = []
-    for _v in torch.chunk(inp_features, n_chunks, dim=0):
-        _v = _v.to(device)
-
-        # _A = affinity_from_features(subgraph_features, _v, affinity_focal_gamma, distance).mT
-        # if knn is not None:
-        #     mask = torch.full_like(_A, True, dtype=torch.bool)
-        #     mask[torch.arange(len(_v))[:, None], _A.topk(knn, dim=-1, largest=True).indices] = False
-        #     _A[mask] = 0.0
-        # _A = F.normalize(_A, p=1, dim=-1)
-
-        if distance == 'cosine':
-            _A = _v @ subgraph_features.T
-        elif distance == 'euclidean':
-            _A = - torch.cdist(_v, subgraph_features, p=2)
-        elif distance == 'rbf':
-            _A = - torch.cdist(_v, subgraph_features, p=2) ** 2
+    for _v in torch.chunk(extrapolation_features, n_chunks, dim=0):
+        _v = _v.to(device)                                                                              # [_m x d]
+        _A = affinity_from_features(anchor_features, _v, affinity_focal_gamma, distance).mT             # [_m x n]
+        if knn is not None:
+            _A, indices = _A.topk(k=knn, dim=-1, largest=True)                                          # [_m x k], [_m x k]
+            _anchor_output = anchor_output[indices]                                                     # [_m x k x d]
         else:
-            raise ValueError("distance should be 'cosine' or 'euclidean', 'rbf'")
+            _anchor_output = anchor_output[None]                                                        # [1 x n x d]
+        _A = Fn.normalize(_A, p=1, dim=-1)
 
-        # keep topk KNN for each row
-        topk_sim, topk_idx = _A.topk(knn, dim=-1, largest=True)
-        row_id = torch.arange(topk_idx.shape[0], device=_A.device)[:, None].expand(
-            -1, topk_idx.shape[1]
-        )
-        _A = torch.sparse_coo_tensor(
-            torch.stack([row_id, topk_idx], dim=-1).reshape(-1, 2).T,
-            topk_sim.reshape(-1),
-            size=(_A.shape[0], _A.shape[1]),
-            device=_A.device,
-        )
-        _A = _A.to_dense().to(dtype=subgraph_output.dtype)
-        _D = _A.sum(-1)
-        _A /= _D[:, None]
+        # if distance == 'cosine':
+        #     _A = _v @ subgraph_features.T
+        # elif distance == 'euclidean':
+        #     _A = - torch.cdist(_v, subgraph_features, p=2)
+        # elif distance == 'rbf':
+        #     _A = - torch.cdist(_v, subgraph_features, p=2) ** 2
+        # else:
+        #     raise ValueError("distance should be 'cosine' or 'euclidean', 'rbf'")
+        #
+        # # keep topk KNN for each row
+        # topk_sim, topk_idx = _A.topk(knn, dim=-1, largest=True)
+        # row_id = torch.arange(topk_idx.shape[0], device=_A.device)[:, None].expand(
+        #     -1, topk_idx.shape[1]
+        # )
+        # _A = torch.sparse_coo_tensor(
+        #     torch.stack([row_id, topk_idx], dim=-1).reshape(-1, 2).T,
+        #     topk_sim.reshape(-1),
+        #     size=(_A.shape[0], _A.shape[1]),
+        #     device=_A.device,
+        # )
+        # _A = _A.to_dense().to(dtype=subgraph_output.dtype)
+        # _D = _A.sum(-1)
+        # _A /= _D[:, None]
 
-        _V = _A @ subgraph_output
+        _V = (_A[:, None, :] @ _anchor_output).squeeze(1)
         if move_output_to_cpu:
             _V = _V.cpu()
         V_list.append(_V)
 
-    subgraph_output = torch.cat(V_list, dim=0)
-    return subgraph_output
-
-
-def propagate_nearest(
-    subgraph_output: torch.Tensor,
-    inp_features: torch.Tensor,
-    subgraph_features: torch.Tensor,
-    distance: Literal["cosine", "euclidean", "rbf"] = "cosine",
-    chunk_size: int = 8192,
-    device: str = None,
-    move_output_to_cpu: bool = False,
-):
-    device = subgraph_output.device if device is None else device
-    if distance == 'cosine':
-        inp_features = lazy_normalize(inp_features, dim=-1)
-        subgraph_features = lazy_normalize(subgraph_features, dim=-1)
-
-    # used in nystrom_tsne, equivalent to propagate_by_knn with knn=1
-    # propagate tSNE from subgraph to full graph
-    V_list = []
-    subgraph_features = subgraph_features.to(device)
-    for i in range(0, inp_features.shape[0], chunk_size):
-        end = min(i + chunk_size, inp_features.shape[0])
-        _v = inp_features[i:end].to(device)
-        _A = -distance_from_features(subgraph_features, _v, distance).mT
-
-        # keep top1 for each row
-        top_idx = _A.argmax(dim=-1).cpu()
-        _V = subgraph_output[top_idx]
-        if move_output_to_cpu:
-            _V = _V.cpu()
-        V_list.append(_V)
-
-    subgraph_output = torch.cat(V_list, dim=0)
-    return subgraph_output
+    anchor_output = torch.cat(V_list, dim=0)
+    return anchor_output
 
 
 # wrapper functions for adding new nodes to existing graph
-def propagate_eigenvectors(
-    eigenvectors: torch.Tensor,
-    features: torch.Tensor,
-    new_features: torch.Tensor,
+def extrapolate_knn_with_subsampling(
+    full_features: torch.Tensor,
+    full_output: torch.Tensor,
+    extrapolation_features: torch.Tensor,
     knn: int,
     num_sample: int,
-    sample_method: Literal["farthest", "random"],
+    sample_method: SampleOptions,
     chunk_size: int,
-    device: str,
+    device: str
 ):
     """Propagate eigenvectors to new nodes using KNN. Note: this is equivalent to the class API `NCUT.tranform(new_features)`, expect for the sampling is re-done in this function.
     Args:
-        eigenvectors (torch.Tensor): eigenvectors from existing nodes, shape (num_sample, num_eig)
-        features (torch.Tensor): features from existing nodes, shape (n_samples, n_features)
-        new_features (torch.Tensor): features from new nodes, shape (n_new_samples, n_features)
+        full_output (torch.Tensor): eigenvectors from existing nodes, shape (num_sample, num_eig)
+        full_features (torch.Tensor): features from existing nodes, shape (n_samples, n_features)
+        extrapolation_features (torch.Tensor): features from new nodes, shape (n_new_samples, n_features)
         knn (int): number of KNN to propagate eigenvectors, default 3
         num_sample (int): number of samples for subgraph sampling, default 50000
         sample_method (str): sample method, 'farthest' (default) or 'random'
@@ -286,31 +247,31 @@ def propagate_eigenvectors(
         >>> old_eigenvectors = torch.randn(3000, 20)
         >>> old_features = torch.randn(3000, 100)
         >>> new_features = torch.randn(200, 100)
-        >>> new_eigenvectors = propagate_eigenvectors(old_eigenvectors, new_features, old_features, knn=3)
+        >>> new_eigenvectors = extrapolate_knn_with_subsampling(extrapolation_features,old_eigenvectors,old_features,knn=3,num_sample=,sample_method=,chunk_size=,device=)
         >>> # new_eigenvectors.shape = (200, 20)
     """
 
-    device = eigenvectors.device if device is None else device
+    device = full_output.device if device is None else device
 
     # sample subgraph
-    subgraph_indices = run_subgraph_sampling(
-        features,
+    anchor_indices = run_subgraph_sampling(
+        full_features,
         num_sample,
         sample_method=sample_method,
     )
 
-    subgraph_eigenvectors = eigenvectors[subgraph_indices].to(device)
-    subgraph_features = features[subgraph_indices].to(device)
-    new_features = new_features.to(device)
+    anchor_output = full_output[anchor_indices].to(device)
+    anchor_features = full_features[anchor_indices].to(device)
+    extrapolation_features = extrapolation_features.to(device)
 
     # propagate eigenvectors from subgraph to new nodes
-    new_eigenvectors = propagate_knn(
-        subgraph_eigenvectors,
-        new_features,
-        subgraph_features,
+    new_eigenvectors = extrapolate_knn(
+        anchor_features,
+        anchor_output,
+        extrapolation_features,
         knn=knn,
         chunk_size=chunk_size,
-        device=device,
+        device=device
     )
     return new_eigenvectors
 

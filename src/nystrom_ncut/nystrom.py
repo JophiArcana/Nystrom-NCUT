@@ -72,7 +72,7 @@ class OnlineNystrom:
         self.anchor_features = features
 
         self.kernel.fit(self.anchor_features)
-        self.inverse_approximation_dim = max(self.n_components, features.shape[-1]) + 1
+        self.inverse_approximation_dim = max(self.n_components, features.shape[-1] + 1)
         U, L = self._update_to_kernel()                                                             # [n x (? + 1)], [? + 1]
 
         self.transform_matrix = (U / L)[:, :self.n_components]                                      # [n x n_components]
@@ -135,7 +135,7 @@ class OnlineNystrom:
 def solve_eig(
     A: torch.Tensor,
     num_eig: int,
-    eig_solver: Literal["svd_lowrank", "lobpcg", "svd", "eigh"],
+    eig_solver: EigSolverOptions,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """PyTorch implementation of Eigensolver cut without Nystrom-like approximation.
 

@@ -4,8 +4,8 @@ from .ncut_pytorch import (
 )
 from .propagation_utils import (
     affinity_from_features,
-    propagate_eigenvectors,
-    propagate_knn,
+    extrapolate_knn_with_subsampling,
+    extrapolate_knn,
     quantile_normalize,
 )
 from .visualize_utils import (
@@ -17,6 +17,5 @@ from .visualize_utils import (
     rgb_from_cosine_tsne_3d,
     rotate_rgb_cube,
     convert_to_lab_color,
-    propagate_rgb_color,
     get_mask,
 )

@@ -4,6 +4,10 @@ from typing import Literal, Tuple
 import torch
 import torch.nn.functional as Fn
 
+from .common import (
+    DistanceOptions,
+    SampleOptions,
+)
 from .nystrom import (
     EigSolverOptions,
     OnlineKernel,
@@ -14,9 +18,6 @@ from .propagation_utils import (
     affinity_from_features,
     run_subgraph_sampling,
 )
-
-
-DistanceOptions = Literal["cosine", "euclidean", "rbf"]
 
 
 class LaplacianKernel(OnlineKernel):
@@ -46,9 +47,10 @@ class LaplacianKernel(OnlineKernel):
             affinity_focal_gamma=self.affinity_focal_gamma,
             distance=self.distance,
         )                                                       # [n x n]
+        d = features.shape[-1]
         U, L = solve_eig(
             self.A,
-            num_eig=features.shape[-1] + 1,
+            num_eig=d + 1,  # d * (d + 3) // 2 + 1,
             eig_solver=self.eig_solver,
         )                                                       # [n x (d + 1)], [d + 1]
         self.Ainv = U @ torch.diag(1 / L) @ U.mT                # [n x n]
@@ -97,11 +99,10 @@ class NCUT(OnlineNystrom):
         n_components: int = 100,
         affinity_focal_gamma: float = 1.0,
         num_sample: int = 10000,
-        sample_method: Literal["farthest", "random"] = "farthest",
+        sample_method: SampleOptions = "farthest",
         distance: DistanceOptions = "cosine",
         eig_solver: EigSolverOptions = "svd_lowrank",
         normalize_features: bool = None,
-        move_output_to_cpu: bool = False,
         chunk_size: int = 8192,
     ):
         """
@@ -117,7 +118,6 @@ class NCUT(OnlineNystrom):
             eig_solver (str): eigen decompose solver, ['svd_lowrank', 'lobpcg', 'svd', 'eigh'].
             normalize_features (bool): normalize input features before computing affinity matrix,
                 default 'None' is True for cosine distance, False for euclidean distance and rbf
-            move_output_to_cpu (bool): move output to CPU, set to True if you have memory issue
             chunk_size (int): chunk size for large-scale matrix multiplication
         """
         OnlineNystrom.__init__(
@@ -127,18 +127,18 @@ class NCUT(OnlineNystrom):
             eig_solver=eig_solver,
             chunk_size=chunk_size,
         )
-        self.num_sample = num_sample
-        self.sample_method = sample_method
-        self.distance = distance
-        self.normalize_features = normalize_features
+        self.num_sample: int = num_sample
+        self.sample_method: SampleOptions = sample_method
+        self.anchor_indices: torch.Tensor = None
+        self.distance: DistanceOptions = distance
+        self.normalize_features: bool = normalize_features
         if self.normalize_features is None:
             if distance in ["cosine"]:
                 self.normalize_features = True
             if distance in ["euclidean", "rbf"]:
                 self.normalize_features = False
 
-        self.move_output_to_cpu = move_output_to_cpu
-        self.chunk_size = chunk_size
+        self.chunk_size: int = chunk_size
 
     def _fit_helper(
         self,
@@ -152,16 +152,6 @@ class NCUT(OnlineNystrom):
             )
             self.num_sample = _n
 
-        # check if features dimension greater than num_eig
-        if self.eig_solver in ["svd_lowrank", "lobpcg"]:
-            assert (
-                _n >= self.n_components * 2
-            ), "number of nodes should be greater than 2*num_eig"
-        elif self.eig_solver in ["svd", "eigh"]:
-            assert (
-                _n >= self.n_components
-            ), "number of nodes should be greater than num_eig"
-
         assert self.distance in ["cosine", "euclidean", "rbf"], "distance should be 'cosine', 'euclidean', 'rbf'"
 
         if self.normalize_features:
@@ -169,20 +159,20 @@ class NCUT(OnlineNystrom):
             features = torch.nn.functional.normalize(features, dim=-1)
 
         if precomputed_sampled_indices is not None:
-            sampled_indices = precomputed_sampled_indices
+            _sampled_indices = precomputed_sampled_indices
         else:
-            sampled_indices = run_subgraph_sampling(
+            _sampled_indices = run_subgraph_sampling(
                 features,
                 self.num_sample,
                 sample_method=self.sample_method,
             )
-        sampled_indices = torch.sort(sampled_indices).values
-        sampled_features = features[sampled_indices]
+        self.anchor_indices = torch.sort(_sampled_indices).values
+        sampled_features = features[self.anchor_indices]
         OnlineNystrom.fit(self, sampled_features)
 
         _n_not_sampled = _n - len(sampled_features)
         if _n_not_sampled > 0:
-            unsampled_indices = torch.full((_n,), True, device=features.device).scatter_(0, sampled_indices, False)
+            unsampled_indices = torch.full((_n,), True, device=features.device).scatter_(0, self.anchor_indices, False)
             unsampled_features = features[unsampled_indices]
             V_unsampled, _ = OnlineNystrom.update(self, unsampled_features)
         else:

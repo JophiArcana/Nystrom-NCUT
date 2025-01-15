@@ -1,8 +1,12 @@
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import torch
 import torch.nn.functional as Fn
+
+
+DistanceOptions = Literal["cosine", "euclidean", "rbf"]
+SampleOptions = Literal["farthest", "random"]
 
 
 def ceildiv(a: int, b: int) -> int:
