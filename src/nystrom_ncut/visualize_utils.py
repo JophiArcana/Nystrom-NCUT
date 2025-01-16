@@ -195,8 +195,8 @@ def rgb_from_cosine_tsne_3d(
         )
         perplexity = num_sample // 2
 
-    def cosine_to_rbf(X: torch.Tensor) -> torch.Tensor:                                 # [B... x N x 3]
-        dr = DistanceRealization(n_components=3, num_sample=20000, distance="cosine", eig_solver="lobpcg")
+    def cosine_to_rbf(X: torch.Tensor) -> torch.Tensor:
+        dr = DistanceRealization(n_components=3, num_sample=20000, distance="cosine", eig_solver="svd_lowrank")
         return dr.fit_transform(X)
 
     def rgb_from_cosine(X_3d: torch.Tensor, q: float) -> torch.Tensor:

@@ -276,5 +276,7 @@ def solve_eig(
     eigen_vector = eigen_vector[:, indices]
 
     # correct the random rotation (flipping sign) of eigenvectors
-    eigen_vector = eigen_vector * torch.sum(eigen_vector, dim=0).sign()
+    sign = torch.sum(eigen_vector, dim=0).sign()
+    sign[sign == 0] = 1.0
+    eigen_vector = eigen_vector * sign
     return eigen_vector, eigen_value
