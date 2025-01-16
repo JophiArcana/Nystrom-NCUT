@@ -1,3 +1,5 @@
+from typing import Tuple
+
 import torch
 
 from .nystrom import (
@@ -125,3 +127,15 @@ class DistanceRealization(OnlineNystromSubsampleFit):
             chunk_size=chunk_size,
         )
         self.distance: DistanceOptions = distance
+
+    def fit_transform(
+        self,
+        features: torch.Tensor,
+        precomputed_sampled_indices: torch.Tensor = None,
+    ) -> torch.Tensor:
+        V, L = OnlineNystromSubsampleFit.fit_transform(self, features, precomputed_sampled_indices)
+        return V * (L ** 0.5)
+
+    def transform(self, features: torch.Tensor = None) -> torch.Tensor:
+        V, L = OnlineNystromSubsampleFit.transform(features)
+        return V * (L ** 0.5)

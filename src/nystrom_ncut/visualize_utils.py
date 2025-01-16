@@ -11,6 +11,9 @@ from .common import (
     quantile_min_max,
     quantile_normalize,
 )
+from .nystrom import (
+    DistanceRealization,
+)
 from .propagation_utils import (
     run_subgraph_sampling,
     extrapolate_knn,
@@ -192,18 +195,9 @@ def rgb_from_cosine_tsne_3d(
         )
         perplexity = num_sample // 2
 
-
     def cosine_to_rbf(X: torch.Tensor) -> torch.Tensor:                                 # [B... x N x 3]
-        normalized_X = X / torch.norm(X, p=2, dim=-1, keepdim=True)                     # [B... x N x 3]
-        D = 1 - normalized_X @ normalized_X.mT                                          # [B... x N x N]
-
-        G = (D[..., :1, 1:] ** 2 + D[..., 1:, :1] ** 2 - D[..., 1:, 1:] ** 2) / 2       # [B... x (N - 1) x (N - 1)]
-        L, V = torch.linalg.eigh(G)                                                     # [B... x (N - 1)], [B... x (N - 1) x (N - 1)]
-        sqrtG = V[..., -3:] * (L[..., None, -3:] ** 0.5)                                # [B... x (N - 1) x 3]
-
-        Y = torch.cat((torch.zeros_like(sqrtG[..., :1, :]), sqrtG), dim=-2)             # [B... x N x 3]
-        Y = Y - torch.mean(Y, dim=-2, keepdim=True)
-        return Y
+        dr = DistanceRealization(n_components=3, num_sample=20000, distance="cosine", eig_solver="lobpcg")
+        return dr.fit_transform(X)
 
     def rgb_from_cosine(X_3d: torch.Tensor, q: float) -> torch.Tensor:
         return rgb_from_3d_rgb_cube(cosine_to_rbf(X_3d), q=q)
@@ -379,7 +373,6 @@ def rotate_rgb_cube(rgb, position=1):
 
 def rgb_from_3d_rgb_cube(X_3d, q=0.95):
     """convert 3D t-SNE to RGB color space
-
     Args:
         X_3d (torch.Tensor): 3D t-SNE embedding, shape (n_samples, 3)
         q (float): quantile, default 0.95
@@ -389,10 +382,10 @@ def rgb_from_3d_rgb_cube(X_3d, q=0.95):
     """
     assert X_3d.shape[1] == 3, "input should be (n_samples, 3)"
     assert len(X_3d.shape) == 2, "input should be (n_samples, 3)"
-    rgb = []
-    for i in range(3):
-        rgb.append(quantile_normalize(X_3d[:, i], q=q))
-    rgb = torch.stack(rgb, dim=-1)
+    rgb = torch.stack([
+        quantile_normalize(x, q=q)
+        for x in torch.unbind(X_3d, dim=1)
+    ], dim=-1)
     return rgb
 
 
