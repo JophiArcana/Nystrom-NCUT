@@ -1,8 +1,10 @@
-from .ncut_pytorch import (
+from .nystrom import (
+    DistanceRealization,
     NCut,
     axis_align,
 )
 from .propagation_utils import (
+    distance_from_features,
     affinity_from_features,
     extrapolate_knn_with_subsampling,
     extrapolate_knn,

@@ -36,12 +36,18 @@ def _rgb_with_dimensionality_reduction(
     device: str,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
 
-    features = extrapolate_knn(
-        features,
-        features,
-        features,
-        distance="cosine",
-    )
+    if True:
+        _subgraph_indices = run_subgraph_sampling(
+            features,
+            num_sample=10000,
+            sample_method="farthest",
+        )
+        features = extrapolate_knn(
+            features[_subgraph_indices],
+            features[_subgraph_indices],
+            features,
+            distance="cosine",
+        )
 
     subgraph_indices = run_subgraph_sampling(
         features,

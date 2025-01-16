@@ -47,6 +47,7 @@ def run_subgraph_sampling(
             sampled_indices = torch.randperm(features.shape[0])[:num_sample]
         else:
             raise ValueError("sample_method should be 'farthest' or 'random'")
+        sampled_indices = torch.sort(sampled_indices).values
     return sampled_indices.to(features.device)
 
 

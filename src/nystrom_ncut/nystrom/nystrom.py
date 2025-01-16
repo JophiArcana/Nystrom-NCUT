@@ -1,9 +1,14 @@
+import logging
 from typing import Literal, Tuple
 
 import torch
 
-from .common import (
+from ..common import (
+    SampleOptions,
     ceildiv,
+)
+from ..propagation_utils import (
+    run_subgraph_sampling,
 )
 
 
@@ -132,6 +137,102 @@ class OnlineNystrom:
                 """ Unchunked version """
                 VS = self.kernel.transform(features) @ self.transform_matrix                            # [m x n_components]
         return VS, self.LS                                                                          # [m x n_components], [n_components]
+
+
+class OnlineNystromSubsampleFit(OnlineNystrom):
+    def __init__(
+        self,
+        n_components: int,
+        kernel: OnlineKernel,
+        num_sample: int,
+        sample_method: SampleOptions,
+        eig_solver: EigSolverOptions = "svd_lowrank",
+        chunk_size: int = 8192,
+    ):
+        OnlineNystrom.__init__(
+            self,
+            n_components=n_components,
+            kernel=kernel,
+            eig_solver=eig_solver,
+            chunk_size=chunk_size,
+        )
+        self.num_sample: int = num_sample
+        self.sample_method: SampleOptions = sample_method
+        self.anchor_indices: torch.Tensor = None
+
+    def _fit_helper(
+        self,
+        features: torch.Tensor,
+        precomputed_sampled_indices: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        _n = features.shape[0]
+        if self.num_sample >= _n:
+            logging.info(
+                f"NCUT nystrom num_sample is larger than number of input samples, nyström approximation is not needed, setting num_sample={_n}"
+            )
+            self.num_sample = _n
+
+        if precomputed_sampled_indices is not None:
+            self.anchor_indices = precomputed_sampled_indices
+        else:
+            self.anchor_indices = run_subgraph_sampling(
+                features,
+                self.num_sample,
+                sample_method=self.sample_method,
+            )
+        sampled_features = features[self.anchor_indices]
+        OnlineNystrom.fit(self, sampled_features)
+
+        _n_not_sampled = _n - len(sampled_features)
+        if _n_not_sampled > 0:
+            unsampled_indices = torch.full((_n,), True, device=features.device).scatter_(0, self.anchor_indices, False)
+            unsampled_features = features[unsampled_indices]
+            V_unsampled, _ = OnlineNystrom.update(self, unsampled_features)
+        else:
+            unsampled_indices = V_unsampled = None
+        return unsampled_indices, V_unsampled
+
+    def fit(
+        self,
+        features: torch.Tensor,
+        precomputed_sampled_indices: torch.Tensor = None,
+    ):
+        """Fit Nystrom Normalized Cut on the input features.
+        Args:
+            features (torch.Tensor): input features, shape (n_samples, n_features)
+            precomputed_sampled_indices (torch.Tensor): precomputed sampled indices, shape (num_sample,)
+                override the sample_method, if not None
+        Returns:
+            (NCut): self
+        """
+        OnlineNystromSubsampleFit._fit_helper(self, features, precomputed_sampled_indices)
+        return self
+
+    def fit_transform(
+        self,
+        features: torch.Tensor,
+        precomputed_sampled_indices: torch.Tensor = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            features (torch.Tensor): input features, shape (n_samples, n_features)
+            precomputed_sampled_indices (torch.Tensor): precomputed sampled indices, shape (num_sample,)
+                override the sample_method, if not None
+
+        Returns:
+            (torch.Tensor): eigen_vectors, shape (n_samples, num_eig)
+            (torch.Tensor): eigen_values, sorted in descending order, shape (num_eig,)
+        """
+        unsampled_indices, V_unsampled = OnlineNystromSubsampleFit._fit_helper(self, features, precomputed_sampled_indices)
+        V_sampled, L = OnlineNystrom.transform(self)
+
+        if unsampled_indices is not None:
+            V = torch.zeros((len(unsampled_indices), self.n_components), device=features.device)
+            V[~unsampled_indices] = V_sampled
+            V[unsampled_indices] = V_unsampled
+        else:
+            V = V_sampled
+        return V, L
 
 
 def solve_eig(

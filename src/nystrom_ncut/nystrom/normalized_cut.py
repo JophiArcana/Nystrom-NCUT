@@ -1,22 +1,18 @@
-import logging
-from typing import Tuple
-
 import torch
 import torch.nn.functional as Fn
 
-from .common import (
-    DistanceOptions,
-    SampleOptions,
-)
 from .nystrom import (
     EigSolverOptions,
     OnlineKernel,
-    OnlineNystrom,
+    OnlineNystromSubsampleFit,
     solve_eig,
 )
-from .propagation_utils import (
+from ..common import (
+    DistanceOptions,
+    SampleOptions,
+)
+from ..propagation_utils import (
     affinity_from_features,
-    run_subgraph_sampling,
 )
 
 
@@ -68,16 +64,16 @@ class LaplacianKernel(OnlineKernel):
         b_c = torch.sum(B, dim=-2)                              # [m]
         self.b_r = self.b_r + b_r                               # [n]
 
-        rowscale = self.a_r + self.b_r                          # [n]
-        colscale = b_c + B.mT @ self.Ainv @ self.b_r            # [m]
-        scale = (rowscale[:, None] * colscale) ** -0.5          # [n x m]
+        row_sum = self.a_r + self.b_r                           # [n]
+        col_sum = b_c + B.mT @ self.Ainv @ self.b_r             # [m]
+        scale = (row_sum[:, None] * col_sum) ** -0.5            # [n x m]
         return (B * scale).mT                                   # [m x n]
 
     def transform(self, features: torch.Tensor = None) -> torch.Tensor:
-        rowscale = self.a_r + self.b_r                          # [n]
+        row_sum = self.a_r + self.b_r                           # [n]
         if features is None:
             B = self.A                                          # [n x n]
-            colscale = rowscale                                 # [n]
+            col_sum = row_sum                                   # [n]
         else:
             B = affinity_from_features(
                 self.anchor_features,                           # [n x d]
@@ -86,12 +82,12 @@ class LaplacianKernel(OnlineKernel):
                 distance=self.distance,
             )                                                   # [n x m]
             b_c = torch.sum(B, dim=-2)                          # [m]
-            colscale = b_c + B.mT @ self.Ainv @ self.b_r        # [m]
-        scale = (rowscale[:, None] * colscale) ** -0.5          # [n x m]
+            col_sum = b_c + B.mT @ self.Ainv @ self.b_r         # [m]
+        scale = (row_sum[:, None] * col_sum) ** -0.5            # [n x m]
         return (B * scale).mT                                   # [m x n]
 
 
-class NCut(OnlineNystrom):
+class NCut(OnlineNystromSubsampleFit):
     """Nystrom Normalized Cut for large scale graph."""
 
     def __init__(
@@ -102,7 +98,6 @@ class NCut(OnlineNystrom):
         sample_method: SampleOptions = "farthest",
         distance: DistanceOptions = "cosine",
         eig_solver: EigSolverOptions = "svd_lowrank",
-        normalize_features: bool = None,
         chunk_size: int = 8192,
     ):
         """
@@ -116,110 +111,18 @@ class NCut(OnlineNystrom):
                 farthest point sampling is recommended for better Nystrom-approximation accuracy
             distance (str): distance metric for affinity matrix, ['cosine', 'euclidean', 'rbf'].
             eig_solver (str): eigen decompose solver, ['svd_lowrank', 'lobpcg', 'svd', 'eigh'].
-            normalize_features (bool): normalize input features before computing affinity matrix,
-                default 'None' is True for cosine distance, False for euclidean distance and rbf
             chunk_size (int): chunk size for large-scale matrix multiplication
         """
-        OnlineNystrom.__init__(
+        OnlineNystromSubsampleFit.__init__(
             self,
             n_components=n_components,
             kernel=LaplacianKernel(affinity_focal_gamma, distance, eig_solver),
+            num_sample=num_sample,
+            sample_method=sample_method,
             eig_solver=eig_solver,
             chunk_size=chunk_size,
         )
-        self.num_sample: int = num_sample
-        self.sample_method: SampleOptions = sample_method
-        self.anchor_indices: torch.Tensor = None
         self.distance: DistanceOptions = distance
-        self.normalize_features: bool = normalize_features
-        if self.normalize_features is None:
-            if distance in ["cosine"]:
-                self.normalize_features = True
-            if distance in ["euclidean", "rbf"]:
-                self.normalize_features = False
-
-        self.chunk_size: int = chunk_size
-
-    def _fit_helper(
-        self,
-        features: torch.Tensor,
-        precomputed_sampled_indices: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        _n = features.shape[0]
-        if self.num_sample >= _n:
-            logging.info(
-                f"NCUT nystrom num_sample is larger than number of input samples, nyström approximation is not needed, setting num_sample={_n}"
-            )
-            self.num_sample = _n
-
-        assert self.distance in ["cosine", "euclidean", "rbf"], "distance should be 'cosine', 'euclidean', 'rbf'"
-
-        if self.normalize_features:
-            # features need to be normalized for affinity matrix computation (cosine distance)
-            features = torch.nn.functional.normalize(features, dim=-1)
-
-        if precomputed_sampled_indices is not None:
-            _sampled_indices = precomputed_sampled_indices
-        else:
-            _sampled_indices = run_subgraph_sampling(
-                features,
-                self.num_sample,
-                sample_method=self.sample_method,
-            )
-        self.anchor_indices = torch.sort(_sampled_indices).values
-        sampled_features = features[self.anchor_indices]
-        OnlineNystrom.fit(self, sampled_features)
-
-        _n_not_sampled = _n - len(sampled_features)
-        if _n_not_sampled > 0:
-            unsampled_indices = torch.full((_n,), True, device=features.device).scatter_(0, self.anchor_indices, False)
-            unsampled_features = features[unsampled_indices]
-            V_unsampled, _ = OnlineNystrom.update(self, unsampled_features)
-        else:
-            unsampled_indices = V_unsampled = None
-        return unsampled_indices, V_unsampled
-
-    def fit(
-        self,
-        features: torch.Tensor,
-        precomputed_sampled_indices: torch.Tensor = None,
-    ):
-        """Fit Nystrom Normalized Cut on the input features.
-        Args:
-            features (torch.Tensor): input features, shape (n_samples, n_features)
-            precomputed_sampled_indices (torch.Tensor): precomputed sampled indices, shape (num_sample,)
-                override the sample_method, if not None
-        Returns:
-            (NCut): self
-        """
-        NCut._fit_helper(self, features, precomputed_sampled_indices)
-        return self
-
-    def fit_transform(
-        self,
-        features: torch.Tensor,
-        precomputed_sampled_indices: torch.Tensor = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            features (torch.Tensor): input features, shape (n_samples, n_features)
-            precomputed_sampled_indices (torch.Tensor): precomputed sampled indices, shape (num_sample,)
-                override the sample_method, if not None
-
-        Returns:
-            (torch.Tensor): eigen_vectors, shape (n_samples, num_eig)
-            (torch.Tensor): eigen_values, sorted in descending order, shape (num_eig,)
-        """
-        unsampled_indices, V_unsampled = NCut._fit_helper(self, features, precomputed_sampled_indices)
-        V_sampled, L = OnlineNystrom.transform(self)
-
-        if unsampled_indices is not None:
-            V = torch.zeros((len(unsampled_indices), self.n_components), device=features.device)
-            V[~unsampled_indices] = V_sampled
-            V[unsampled_indices] = V_unsampled
-        else:
-            V = V_sampled
-        return V, L
 
 
 def axis_align(eigen_vectors: torch.Tensor, max_iter=300):
