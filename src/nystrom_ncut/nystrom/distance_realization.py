@@ -122,6 +122,7 @@ class DistanceRealization(OnlineNystromSubsampleFit):
             n_components=n_components,
             kernel=GramKernel(distance, eig_solver),
             num_sample=num_sample,
+            distance=distance,
             sample_method=sample_method,
             eig_solver=eig_solver,
             chunk_size=chunk_size,

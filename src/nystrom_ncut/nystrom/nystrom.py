@@ -4,6 +4,7 @@ from typing import Literal, Tuple
 import torch
 
 from ..common import (
+    DistanceOptions,
     SampleOptions,
     ceildiv,
 )
@@ -145,6 +146,7 @@ class OnlineNystromSubsampleFit(OnlineNystrom):
         n_components: int,
         kernel: OnlineKernel,
         num_sample: int,
+        distance: DistanceOptions,
         sample_method: SampleOptions,
         eig_solver: EigSolverOptions = "svd_lowrank",
         chunk_size: int = 8192,
@@ -157,6 +159,7 @@ class OnlineNystromSubsampleFit(OnlineNystrom):
             chunk_size=chunk_size,
         )
         self.num_sample: int = num_sample
+        self.distance: DistanceOptions = distance
         self.sample_method: SampleOptions = sample_method
         self.anchor_indices: torch.Tensor = None
 
@@ -176,8 +179,9 @@ class OnlineNystromSubsampleFit(OnlineNystrom):
             self.anchor_indices = precomputed_sampled_indices
         else:
             self.anchor_indices = run_subgraph_sampling(
-                features,
-                self.num_sample,
+                features=features,
+                num_sample=self.num_sample,
+                disttype=self.distance,
                 sample_method=self.sample_method,
             )
         sampled_features = features[self.anchor_indices]

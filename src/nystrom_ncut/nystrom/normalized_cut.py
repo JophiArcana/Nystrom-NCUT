@@ -118,11 +118,11 @@ class NCut(OnlineNystromSubsampleFit):
             n_components=n_components,
             kernel=LaplacianKernel(affinity_focal_gamma, distance, eig_solver),
             num_sample=num_sample,
+            distance=distance,
             sample_method=sample_method,
             eig_solver=eig_solver,
             chunk_size=chunk_size,
         )
-        self.distance: DistanceOptions = distance
 
 
 def axis_align(eigen_vectors: torch.Tensor, max_iter=300):

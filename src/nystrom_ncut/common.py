@@ -24,6 +24,15 @@ def lazy_normalize(x: torch.Tensor, n: int = 1000, **normalize_kwargs: Any) -> t
         return Fn.normalize(x, **normalize_kwargs)
 
 
+def to_euclidean(x: torch.Tensor, disttype: DistanceOptions) -> torch.Tensor:
+    if disttype == "cosine":
+        return lazy_normalize(x, p=2, dim=-1)
+    elif disttype == "rbf":
+        return x
+    else:
+        raise ValueError(f"to_euclidean not implemented for disttype {disttype}.")
+
+
 def quantile_min_max(x, q1=0.01, q2=0.99, n_sample=10000):
     if x.shape[0] > n_sample:
         np.random.seed(0)

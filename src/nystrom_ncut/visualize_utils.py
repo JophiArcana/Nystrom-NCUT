@@ -8,6 +8,7 @@ from sklearn.base import BaseEstimator
 
 from .common import (
     lazy_normalize,
+    to_euclidean,
     quantile_min_max,
     quantile_normalize,
 )
@@ -20,76 +21,72 @@ from .propagation_utils import (
 )
 
 
-def _identity(X: torch.Tensor) -> torch.Tensor:
-    return X
-
-
 def _rgb_with_dimensionality_reduction(
     features: torch.Tensor,
     num_sample: int,
-    metric: Literal["cosine", "euclidean"],
+    disttype: Literal["cosine", "euclidean"],
     rgb_func: Callable[[torch.Tensor, float], torch.Tensor],
     q: float,
     knn: int,
     reduction: Callable[..., BaseEstimator],
     reduction_dim: int,
     reduction_kwargs: Dict[str, Any],
-    transform_func: Callable[[torch.Tensor], torch.Tensor],
     seed: int,
     device: str,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
 
     if True:
         _subgraph_indices = run_subgraph_sampling(
-            features,
+            features=features,
             num_sample=10000,
+            disttype=disttype,
             sample_method="farthest",
         )
         features = extrapolate_knn(
-            features[_subgraph_indices],
-            features[_subgraph_indices],
-            features,
-            distance="cosine",
+            anchor_features=features[_subgraph_indices],
+            anchor_output=features[_subgraph_indices],
+            extrapolation_features=features,
+            distance=disttype,
         )
 
     subgraph_indices = run_subgraph_sampling(
-        features,
-        num_sample,
+        features=features,
+        num_sample=num_sample,
+        disttype=disttype,
         sample_method="farthest",
     )
 
     _inp = features[subgraph_indices].numpy(force=True)
     _subgraph_embed = reduction(
         n_components=reduction_dim,
-        metric=metric,
+        metric=disttype,
         random_state=seed,
         **reduction_kwargs
     ).fit_transform(_inp)
 
     _subgraph_embed = torch.tensor(_subgraph_embed, dtype=torch.float32)
-    X_nd = transform_func(extrapolate_knn(
+    rgb = rgb_func(extrapolate_knn(
         features[subgraph_indices],
         _subgraph_embed,
         features,
+        disttype,
         knn=knn,
-        distance=metric,
         device=device,
         move_output_to_cpu=True
-    ))
-    rgb = rgb_func(X_nd, q)
-    return X_nd, rgb
+    ), q)
+    return rgb
 
 
 def rgb_from_tsne_2d(
     features: torch.Tensor,
     num_sample: int = 1000,
+    disttype: Literal["cosine", "euclidean"] = "cosine",
     perplexity: int = 150,
-    metric: Literal["cosine", "euclidean"] = "cosine",
     q: float = 0.95,
     knn: int = 10,
     seed: int = 0,
     device: str = None,
-):
+) -> torch.Tensor:
     """
     Returns:
         (torch.Tensor): Embedding in 2D, shape (n_samples, 2)
@@ -108,32 +105,32 @@ def rgb_from_tsne_2d(
         )
         perplexity = num_sample // 2
 
-    x2d, rgb = _rgb_with_dimensionality_reduction(
+    rgb = _rgb_with_dimensionality_reduction(
         features=features,
         num_sample=num_sample,
-        metric=metric,
+        disttype=disttype,
         rgb_func=rgb_from_2d_colormap,
         q=q,
         knn=knn,
         reduction=TSNE, reduction_dim=2, reduction_kwargs={
             "perplexity": perplexity,
-        }, transform_func=_identity,
+        },
         seed=seed,
         device=device,
     )
-    return x2d, rgb
+    return rgb
 
 
 def rgb_from_tsne_3d(
     features: torch.Tensor,
     num_sample: int = 1000,
+    disttype: Literal["cosine", "euclidean"] = "cosine",
     perplexity: int = 150,
-    metric: Literal["cosine", "euclidean"] = "cosine",
     q: float = 0.95,
     knn: int = 10,
     seed: int = 0,
     device: str = None,
-):
+) -> torch.Tensor:
     """
     Returns:
         (torch.Tensor): Embedding in 3D, shape (n_samples, 3)
@@ -152,31 +149,32 @@ def rgb_from_tsne_3d(
         )
         perplexity = num_sample // 2
 
-    x3d, rgb = _rgb_with_dimensionality_reduction(
+    rgb = _rgb_with_dimensionality_reduction(
         features=features,
         num_sample=num_sample,
-        metric=metric,
+        disttype=disttype,
         rgb_func=rgb_from_3d_rgb_cube,
         q=q,
         knn=knn,
         reduction=TSNE, reduction_dim=3, reduction_kwargs={
             "perplexity": perplexity,
-        }, transform_func=_identity,
+        },
         seed=seed,
         device=device,
     )
-    return x3d, rgb
+    return rgb
 
 
-def rgb_from_cosine_tsne_3d(
+def rgb_from_euclidean_tsne_3d(
     features: torch.Tensor,
     num_sample: int = 1000,
+    disttype: Literal["cosine", "euclidean"] = "cosine",
     perplexity: int = 150,
     q: float = 0.95,
     knn: int = 10,
     seed: int = 0,
     device: str = None
-):
+) -> torch.Tensor:
     """
     Returns:
         (torch.Tensor): Embedding in 3D, shape (n_samples, 3)
@@ -195,40 +193,36 @@ def rgb_from_cosine_tsne_3d(
         )
         perplexity = num_sample // 2
 
-    def cosine_to_rbf(X: torch.Tensor) -> torch.Tensor:
-        dr = DistanceRealization(n_components=3, num_sample=20000, distance="cosine", eig_solver="svd_lowrank")
-        return dr.fit_transform(X)
+    def rgb_func(X_3d: torch.Tensor, q: float) -> torch.Tensor:
+        return rgb_from_3d_rgb_cube(to_euclidean(X_3d, disttype), q=q)
 
-    def rgb_from_cosine(X_3d: torch.Tensor, q: float) -> torch.Tensor:
-        return rgb_from_3d_rgb_cube(cosine_to_rbf(X_3d), q=q)
-
-    x3d, rgb = _rgb_with_dimensionality_reduction(
+    rgb = _rgb_with_dimensionality_reduction(
         features=features,
         num_sample=num_sample,
-        metric="cosine",
-        rgb_func=rgb_from_cosine,
+        disttype="cosine",
+        rgb_func=rgb_func,
         q=q,
         knn=knn,
         reduction=TSNE, reduction_dim=3, reduction_kwargs={
             "perplexity": perplexity,
-        }, transform_func=_identity,
+        },
         seed=seed,
         device=device,
     )
-    return x3d, rgb
+    return rgb
 
 
 def rgb_from_umap_2d(
     features: torch.Tensor,
     num_sample: int = 1000,
+    disttype: Literal["cosine", "euclidean"] = "cosine",
     n_neighbors: int = 150,
     min_dist: float = 0.1,
-    metric: Literal["cosine", "euclidean"] = "cosine",
     q: float = 0.95,
     knn: int = 10,
     seed: int = 0,
     device: str = None,
-):
+) -> torch.Tensor:
     """
     Returns:
         (torch.Tensor): Embedding in 2D, shape (n_samples, 2)
@@ -239,34 +233,34 @@ def rgb_from_umap_2d(
     except ImportError:
         raise ImportError("umap import failed, please install `pip install umap-learn`")
 
-    x2d, rgb = _rgb_with_dimensionality_reduction(
+    rgb = _rgb_with_dimensionality_reduction(
         features=features,
         num_sample=num_sample,
-        metric=metric,
+        disttype=disttype,
         rgb_func=rgb_from_2d_colormap,
         q=q,
         knn=knn,
         reduction=UMAP, reduction_dim=2, reduction_kwargs={
             "n_neighbors": n_neighbors,
             "min_dist": min_dist,
-        }, transform_func=_identity,
+        },
         seed=seed,
         device=device,
     )
-    return x2d, rgb
+    return rgb
 
 
 def rgb_from_umap_sphere(
     features: torch.Tensor,
     num_sample: int = 1000,
+    disttype: Literal["cosine", "euclidean"] = "cosine",
     n_neighbors: int = 150,
     min_dist: float = 0.1,
-    metric: Literal["cosine", "euclidean"] = "cosine",
     q: float = 0.95,
     knn: int = 10,
     seed: int = 0,
     device: str = None,
-):
+) -> torch.Tensor:
     """
     Returns:
         (torch.Tensor): Embedding in 2D, shape (n_samples, 2)
@@ -277,37 +271,37 @@ def rgb_from_umap_sphere(
     except ImportError:
         raise ImportError("umap import failed, please install `pip install umap-learn`")
 
-    def transform_func(X: torch.Tensor) -> torch.Tensor:
-        return torch.stack((
+    def rgb_func(X: torch.Tensor, q: float) -> torch.Tensor:
+        return rgb_from_3d_rgb_cube(torch.stack((
             torch.sin(X[:, 0]) * torch.cos(X[:, 1]),
             torch.sin(X[:, 0]) * torch.sin(X[:, 1]),
             torch.cos(X[:, 0]),
-        ), dim=1)
+        ), dim=1), q=q)
 
-    x3d, rgb = _rgb_with_dimensionality_reduction(
+    rgb = _rgb_with_dimensionality_reduction(
         features=features,
         num_sample=num_sample,
-        metric=metric,
-        rgb_func=rgb_from_3d_rgb_cube,
+        disttype=disttype,
+        rgb_func=rgb_func,
         q=q,
         knn=knn,
         reduction=UMAP, reduction_dim=2, reduction_kwargs={
             "n_neighbors": n_neighbors,
             "min_dist": min_dist,
             "output_metric": "haversine",
-        }, transform_func=transform_func,
+        },
         seed=seed,
         device=device,
     )
-    return x3d, rgb
+    return rgb
 
 
 def rgb_from_umap_3d(
     features: torch.Tensor,
     num_sample: int = 1000,
+    disttype: Literal["cosine", "euclidean"] = "cosine",
     n_neighbors: int = 150,
     min_dist: float = 0.1,
-    metric: Literal["cosine", "euclidean"] = "cosine",
     q: float = 0.95,
     knn: int = 10,
     seed: int = 0,
@@ -323,21 +317,21 @@ def rgb_from_umap_3d(
     except ImportError:
         raise ImportError("umap import failed, please install `pip install umap-learn`")
 
-    x3d, rgb = _rgb_with_dimensionality_reduction(
+    rgb = _rgb_with_dimensionality_reduction(
         features=features,
         num_sample=num_sample,
-        metric=metric,
+        disttype=disttype,
         rgb_func=rgb_from_3d_rgb_cube,
         q=q,
         knn=knn,
         reduction=UMAP, reduction_dim=3, reduction_kwargs={
             "n_neighbors": n_neighbors,
             "min_dist": min_dist,
-        }, transform_func=_identity,
+        },
         seed=seed,
         device=device,
     )
-    return x3d, rgb
+    return rgb
 
 
 def flatten_sphere(X_3d):

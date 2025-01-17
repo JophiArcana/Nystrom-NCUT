@@ -9,15 +9,17 @@ from .common import (
     SampleOptions,
     ceildiv,
     lazy_normalize,
+    to_euclidean,
 )
 
 
-@torch.no_grad()
+# @torch.no_grad()
 def run_subgraph_sampling(
     features: torch.Tensor,
     num_sample: int,
+    disttype: DistanceOptions,
+    sample_method: SampleOptions,
     max_draw: int = 1000000,
-    sample_method: SampleOptions = "farthest",
 ):
     if num_sample >= features.shape[0]:
         # if too many samples, use all samples and bypass Nystrom-like approximation
@@ -28,6 +30,7 @@ def run_subgraph_sampling(
     else:
         # sample subgraph
         if sample_method == "farthest":  # default
+            features = to_euclidean(features, disttype)
             if num_sample > max_draw:
                 logging.warning(
                     f"num_sample is larger than max_draw, apply farthest point sampling on random sampled {max_draw} samples"
@@ -144,12 +147,12 @@ def extrapolate_knn(
     anchor_features: torch.Tensor,          # [n x d]
     anchor_output: torch.Tensor,            # [n x d']
     extrapolation_features: torch.Tensor,   # [m x d]
+    distance: DistanceOptions,
     knn: int = 10,                          # k
-    distance: DistanceOptions = "cosine",
     affinity_focal_gamma: float = 1.0,
     chunk_size: int = 8192,
     device: str = None,
-    move_output_to_cpu: bool = False
+    move_output_to_cpu: bool = False,
 ) -> torch.Tensor:                          # [m x d']
     """A generic function to propagate new nodes using KNN.
 
@@ -168,7 +171,7 @@ def extrapolate_knn(
         >>> old_eigenvectors = torch.randn(3000, 20)
         >>> old_features = torch.randn(3000, 100)
         >>> new_features = torch.randn(200, 100)
-        >>> new_eigenvectors = extrapolate_knn(old_features,old_eigenvectors,new_features,knn=3)
+        >>> new_eigenvectors = extrapolate_knn(old_features, old_eigenvectors, new_features, knn=3)
         >>> # new_eigenvectors.shape = (200, 20)
 
     """
@@ -197,21 +200,24 @@ def extrapolate_knn(
             _V = _V.cpu()
         V_list.append(_V)
 
-    anchor_output = torch.cat(V_list, dim=0)
-    return anchor_output
+    extrapolation_output = torch.cat(V_list, dim=0)
+    return extrapolation_output
 
 
 # wrapper functions for adding new nodes to existing graph
 def extrapolate_knn_with_subsampling(
-    full_features: torch.Tensor,
-    full_output: torch.Tensor,
-    extrapolation_features: torch.Tensor,
-    knn: int,
-    num_sample: int,
+    full_features: torch.Tensor,            # [n x d]
+    full_output: torch.Tensor,              # [n x d']
+    extrapolation_features: torch.Tensor,   # [m x d]
+    num_sample: int,                        # n'
     sample_method: SampleOptions,
-    chunk_size: int,
-    device: str
-):
+    distance: DistanceOptions,
+    knn: int = 10,                          # k
+    affinity_focal_gamma: float = 1.0,
+    chunk_size: int = 8192,
+    device: str = None,
+    move_output_to_cpu: bool = False,
+) -> torch.Tensor:                          # [m x d']
     """Propagate eigenvectors to new nodes using KNN. Note: this is equivalent to the class API `NCUT.tranform(new_features)`, expect for the sampling is re-done in this function.
     Args:
         full_output (torch.Tensor): eigenvectors from existing nodes, shape (num_sample, num_eig)
@@ -237,8 +243,9 @@ def extrapolate_knn_with_subsampling(
 
     # sample subgraph
     anchor_indices = run_subgraph_sampling(
-        full_features,
-        num_sample,
+        features=full_features,
+        num_sample=num_sample,
+        disttype=distance,
         sample_method=sample_method,
     )
 
@@ -247,12 +254,15 @@ def extrapolate_knn_with_subsampling(
     extrapolation_features = extrapolation_features.to(device)
 
     # propagate eigenvectors from subgraph to new nodes
-    new_eigenvectors = extrapolate_knn(
+    extrapolation_output = extrapolate_knn(
         anchor_features,
         anchor_output,
         extrapolation_features,
+        distance,
         knn=knn,
+        affinity_focal_gamma=affinity_focal_gamma,
         chunk_size=chunk_size,
-        device=device
+        device=device,
+        move_output_to_cpu=move_output_to_cpu,
     )
-    return new_eigenvectors
+    return extrapolation_output
