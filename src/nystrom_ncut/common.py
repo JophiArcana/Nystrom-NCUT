@@ -33,7 +33,7 @@ def to_euclidean(x: torch.Tensor, disttype: DistanceOptions) -> torch.Tensor:
         raise ValueError(f"to_euclidean not implemented for disttype {disttype}.")
 
 
-def quantile_min_max(x, q1=0.01, q2=0.99, n_sample=10000):
+def quantile_min_max(x: torch.Tensor, q1: float, q2: float, n_sample: int = 10000):
     if x.shape[0] > n_sample:
         np.random.seed(0)
         random_idx = np.random.choice(x.shape[0], n_sample, replace=False)
@@ -43,7 +43,7 @@ def quantile_min_max(x, q1=0.01, q2=0.99, n_sample=10000):
     return vmin, vmax
 
 
-def quantile_normalize(x, q=0.95):
+def quantile_normalize(x: torch.Tensor, q: float = 0.95):
     """normalize each dimension of x to [0, 1], take 95-th percentage, this robust to outliers
         </br> 1. sort x
         </br> 2. take q-th quantile

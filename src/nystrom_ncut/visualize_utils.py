@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Callable, Dict, Literal, Tuple
+from typing import Any, Callable, Dict, Literal
 
 import numpy as np
 import torch
@@ -11,9 +11,6 @@ from .common import (
     to_euclidean,
     quantile_min_max,
     quantile_normalize,
-)
-from .nystrom import (
-    DistanceRealization,
 )
 from .propagation_utils import (
     run_subgraph_sampling,
@@ -334,14 +331,14 @@ def rgb_from_umap_3d(
     return rgb
 
 
-def flatten_sphere(X_3d):
-    x = np.arctan2(X_3d[:, 0], X_3d[:, 1])
-    y = -np.arccos(X_3d[:, 2])
-    X_2d = np.stack([x, y], axis=1)
+def flatten_sphere(X_3d: torch.Tensor) -> torch.Tensor:
+    x = torch.atan2(X_3d[:, 0], X_3d[:, 1])
+    y = -torch.acos(X_3d[:, 2])
+    X_2d = torch.stack((x, y), dim=1)
     return X_2d
 
 
-def rotate_rgb_cube(rgb, position=1):
+def rotate_rgb_cube(rgb: torch.Tensor, position: int = 1) -> torch.Tensor:
     """rotate RGB cube to different position
 
     Args:
@@ -365,7 +362,7 @@ def rotate_rgb_cube(rgb, position=1):
     return rgb
 
 
-def rgb_from_3d_rgb_cube(X_3d, q=0.95):
+def rgb_from_3d_rgb_cube(X_3d: torch.Tensor, q: float = 0.95) -> torch.Tensor:
     """convert 3D t-SNE to RGB color space
     Args:
         X_3d (torch.Tensor): 3D t-SNE embedding, shape (n_samples, 3)
@@ -380,6 +377,26 @@ def rgb_from_3d_rgb_cube(X_3d, q=0.95):
         quantile_normalize(x, q=q)
         for x in torch.unbind(X_3d, dim=1)
     ], dim=-1)
+    return rgb
+
+
+def rgb_from_3d_lab_cube(X_3d: torch.Tensor, q: float = 0.95, full_range: bool = True) -> torch.Tensor:
+    from skimage import color
+    X_3d = X_3d - torch.mean(X_3d, dim=0)
+    U, S, VT = torch.linalg.svd(X_3d)
+    X_3d = torch.flip(U[:, :3] * S, dims=(1,))
+
+    AB_scale = 128.0 / torch.quantile(torch.linalg.norm(X_3d[:, 1:], dim=1), q=q, dim=0)
+    L_min, L_max = torch.quantile(X_3d[:, 0], q=torch.tensor(((1 - q) / 2, (1 + q) / 2)), dim=0)
+    L_scale = 100.0 / (L_max - L_min)
+
+    X_3d[:, 0] = X_3d[:, 0] - L_min
+    if full_range:
+        lab = X_3d * torch.tensor((L_scale, AB_scale, AB_scale))
+    else:
+        lab = X_3d * L_scale
+
+    rgb = torch.tensor(color.lab2rgb(lab.numpy(force=True)))
     return rgb
 
 
@@ -401,7 +418,7 @@ def convert_to_lab_color(rgb, full_range=True):
     return lab_rgb
 
 
-def rgb_from_2d_colormap(X_2d, q=0.95):
+def rgb_from_2d_colormap(X_2d: torch.Tensor, q: float = 0.95):
     xy = X_2d.clone()
     for i in range(2):
         xy[:, i] = quantile_normalize(xy[:, i], q=q)
