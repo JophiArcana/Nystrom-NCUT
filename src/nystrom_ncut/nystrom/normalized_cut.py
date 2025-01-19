@@ -1,18 +1,18 @@
 import torch
 import torch.nn.functional as Fn
 
-from .nystrom import (
+from .nystrom_utils import (
     EigSolverOptions,
     OnlineKernel,
     OnlineNystromSubsampleFit,
     solve_eig,
 )
-from ..common import (
+from ..distance_utils import (
     DistanceOptions,
-    SampleOptions,
-)
-from ..propagation_utils import (
     affinity_from_features,
+)
+from ..sampling_utils import (
+    SampleConfig,
 )
 
 
@@ -94,8 +94,7 @@ class NCut(OnlineNystromSubsampleFit):
         self,
         n_components: int = 100,
         affinity_focal_gamma: float = 1.0,
-        num_sample: int = 10000,
-        sample_method: SampleOptions = "farthest",
+        sample_config: SampleConfig = SampleConfig(),
         distance: DistanceOptions = "cosine",
         eig_solver: EigSolverOptions = "svd_lowrank",
         chunk_size: int = 8192,
@@ -105,9 +104,7 @@ class NCut(OnlineNystromSubsampleFit):
             n_components (int): number of top eigenvectors to return
             affinity_focal_gamma (float): affinity matrix temperature, lower t reduce the not-so-connected edge weights,
                 smaller t result in more sharp eigenvectors.
-            num_sample (int): number of samples for Nystrom-like approximation,
-                reduce only if memory is not enough, increase for better approximation
-            sample_method (str): subgraph sampling, ['farthest', 'random'].
+            sample_config (str): subgraph sampling, ['farthest', 'random'].
                 farthest point sampling is recommended for better Nystrom-approximation accuracy
             distance (str): distance metric for affinity matrix, ['cosine', 'euclidean', 'rbf'].
             eig_solver (str): eigen decompose solver, ['svd_lowrank', 'lobpcg', 'svd', 'eigh'].
@@ -117,9 +114,8 @@ class NCut(OnlineNystromSubsampleFit):
             self,
             n_components=n_components,
             kernel=LaplacianKernel(affinity_focal_gamma, distance, eig_solver),
-            num_sample=num_sample,
             distance=distance,
-            sample_method=sample_method,
+            sample_config=sample_config,
             eig_solver=eig_solver,
             chunk_size=chunk_size,
         )

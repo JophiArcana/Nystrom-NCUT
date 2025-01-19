@@ -3,19 +3,146 @@ from typing import Any, Callable, Dict, Literal
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as Fn
 from sklearn.base import BaseEstimator
 
 from .common import (
+    ceildiv,
     lazy_normalize,
-    to_euclidean,
     quantile_min_max,
     quantile_normalize,
 )
-from .propagation_utils import (
-    run_subgraph_sampling,
-    extrapolate_knn,
+from .distance_utils import (
+    DistanceOptions,
+    to_euclidean,
+    affinity_from_features,
 )
+from .sampling_utils import (
+    SampleConfig,
+    run_subgraph_sampling,
+)
+
+
+def extrapolate_knn(
+    anchor_features: torch.Tensor,          # [n x d]
+    anchor_output: torch.Tensor,            # [n x d']
+    extrapolation_features: torch.Tensor,   # [m x d]
+    distance: DistanceOptions,
+    knn: int = 10,                          # k
+    affinity_focal_gamma: float = 1.0,
+    chunk_size: int = 8192,
+    device: str = None,
+    move_output_to_cpu: bool = False,
+) -> torch.Tensor:                          # [m x d']
+    """A generic function to propagate new nodes using KNN.
+
+    Args:
+        anchor_features (torch.Tensor): features from subgraph, shape (num_sample, n_features)
+        anchor_output (torch.Tensor): output from subgraph, shape (num_sample, D)
+        extrapolation_features (torch.Tensor): features from existing nodes, shape (new_num_samples, n_features)
+        knn (int): number of KNN to propagate eige nvectors
+        distance (str): distance metric, 'cosine' (default) or 'euclidean', 'rbf'
+        chunk_size (int): chunk size for matrix multiplication
+        device (str): device to use for computation, if None, will not change device
+    Returns:
+        torch.Tensor: propagated eigenvectors, shape (new_num_samples, D)
+
+    Examples:
+        >>> old_eigenvectors = torch.randn(3000, 20)
+        >>> old_features = torch.randn(3000, 100)
+        >>> new_features = torch.randn(200, 100)
+        >>> new_eigenvectors = extrapolate_knn(old_features, old_eigenvectors, new_features, knn=3)
+        >>> # new_eigenvectors.shape = (200, 20)
+
+    """
+    device = anchor_output.device if device is None else device
+
+    # used in nystrom_ncut
+    # propagate eigen_vector from subgraph to full graph
+    anchor_output = anchor_output.to(device)
+
+    n_chunks = ceildiv(extrapolation_features.shape[0], chunk_size)
+    V_list = []
+    for _v in torch.chunk(extrapolation_features, n_chunks, dim=0):
+        _v = _v.to(device)                                                                              # [_m x d]
+
+        _A = affinity_from_features(anchor_features, _v, affinity_focal_gamma, distance).mT             # [_m x n]
+        if knn is not None:
+            _A, indices = _A.topk(k=knn, dim=-1, largest=True)                                          # [_m x k], [_m x k]
+            _anchor_output = anchor_output[indices]                                                     # [_m x k x d]
+        else:
+            _anchor_output = anchor_output[None]                                                        # [1 x n x d]
+
+        _A = Fn.normalize(_A, p=1, dim=-1)                                                              # [_m x k]
+        _V = (_A[:, None, :] @ _anchor_output).squeeze(1)                                               # [_m x d]
+
+        if move_output_to_cpu:
+            _V = _V.cpu()
+        V_list.append(_V)
+
+    extrapolation_output = torch.cat(V_list, dim=0)
+    return extrapolation_output
+
+
+# wrapper functions for adding new nodes to existing graph
+def extrapolate_knn_with_subsampling(
+    full_features: torch.Tensor,            # [n x d]
+    full_output: torch.Tensor,              # [n x d']
+    extrapolation_features: torch.Tensor,   # [m x d]
+    sample_config: SampleConfig,
+    distance: DistanceOptions,
+    knn: int = 10,                          # k
+    affinity_focal_gamma: float = 1.0,
+    chunk_size: int = 8192,
+    device: str = None,
+    move_output_to_cpu: bool = False,
+) -> torch.Tensor:                          # [m x d']
+    """Propagate eigenvectors to new nodes using KNN. Note: this is equivalent to the class API `NCUT.tranform(new_features)`, expect for the sampling is re-done in this function.
+    Args:
+        full_output (torch.Tensor): eigenvectors from existing nodes, shape (num_sample, num_eig)
+        full_features (torch.Tensor): features from existing nodes, shape (n_samples, n_features)
+        extrapolation_features (torch.Tensor): features from new nodes, shape (n_new_samples, n_features)
+        knn (int): number of KNN to propagate eigenvectors, default 3
+        sample_config (str): sample method, 'farthest' (default) or 'random'
+        chunk_size (int): chunk size for matrix multiplication, default 8192
+        device (str): device to use for computation, if None, will not change device
+    Returns:
+        torch.Tensor: propagated eigenvectors, shape (n_new_samples, num_eig)
+
+    Examples:
+        >>> old_eigenvectors = torch.randn(3000, 20)
+        >>> old_features = torch.randn(3000, 100)
+        >>> new_features = torch.randn(200, 100)
+        >>> new_eigenvectors = extrapolate_knn_with_subsampling(extrapolation_features,old_eigenvectors,old_features,knn=3,num_sample=,sample_method=,chunk_size=,device=)
+        >>> # new_eigenvectors.shape = (200, 20)
+    """
+
+    device = full_output.device if device is None else device
+
+    # sample subgraph
+    anchor_indices = run_subgraph_sampling(
+        features=full_features,
+        disttype=distance,
+        config=sample_config,
+    )
+
+    anchor_output = full_output[anchor_indices].to(device)
+    anchor_features = full_features[anchor_indices].to(device)
+    extrapolation_features = extrapolation_features.to(device)
+
+    # propagate eigenvectors from subgraph to new nodes
+    extrapolation_output = extrapolate_knn(
+        anchor_features,
+        anchor_output,
+        extrapolation_features,
+        distance,
+        knn=knn,
+        affinity_focal_gamma=affinity_focal_gamma,
+        chunk_size=chunk_size,
+        device=device,
+        move_output_to_cpu=move_output_to_cpu,
+    )
+    return extrapolation_output
 
 
 def _rgb_with_dimensionality_reduction(
@@ -35,9 +162,8 @@ def _rgb_with_dimensionality_reduction(
     if True:
         _subgraph_indices = run_subgraph_sampling(
             features=features,
-            num_sample=10000,
             disttype=disttype,
-            sample_method="farthest",
+            config=SampleConfig(method="fps"),
         )
         features = extrapolate_knn(
             anchor_features=features[_subgraph_indices],
@@ -48,9 +174,8 @@ def _rgb_with_dimensionality_reduction(
 
     subgraph_indices = run_subgraph_sampling(
         features=features,
-        num_sample=num_sample,
         disttype=disttype,
-        sample_method="farthest",
+        config=SampleConfig(method="fps", num_sample=num_sample),
     )
 
     _inp = features[subgraph_indices].numpy(force=True)
@@ -463,7 +588,7 @@ def _transform_heatmap(heatmap, gamma=1.0):
     # large gamma means more focus on the high values, hence smaller mask
     heatmap = 1 / heatmap ** gamma
     # min-max normalization [0, 1]
-    vmin, vmax = quantile_min_max(heatmap.flatten())
+    vmin, vmax = quantile_min_max(heatmap.flatten(), 0.01, 0.99)
     heatmap = (heatmap - vmin) / (vmax - vmin)
     return heatmap
 
@@ -531,7 +656,7 @@ def get_mask(
 
     # normalize the eigenvectors to unit norm, to compute cosine similarity
     all_eigvecs = lazy_normalize(all_eigvecs, p=2, dim=-1)
-    prompt_eigvec = F.normalize(prompt_eigvec, p=2, dim=-1)
+    prompt_eigvec = Fn.normalize(prompt_eigvec, p=2, dim=-1)
 
     # compute the cosine similarity
     cos_sim = all_eigvecs @ prompt_eigvec.unsqueeze(-1)  # (B, H, W, 1)

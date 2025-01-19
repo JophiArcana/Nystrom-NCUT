@@ -1,19 +1,17 @@
-from typing import Tuple
-
 import torch
 
-from .nystrom import (
+from .nystrom_utils import (
     EigSolverOptions,
     OnlineKernel,
     OnlineNystromSubsampleFit,
     solve_eig,
 )
-from ..common import (
+from ..distance_utils import (
     DistanceOptions,
-    SampleOptions,
-)
-from ..propagation_utils import (
     distance_from_features,
+)
+from ..sampling_utils import (
+    SampleConfig,
 )
 
 
@@ -100,8 +98,7 @@ class DistanceRealization(OnlineNystromSubsampleFit):
     def __init__(
         self,
         n_components: int = 100,
-        num_sample: int = 10000,
-        sample_method: SampleOptions = "farthest",
+        sample_config: SampleConfig = SampleConfig(),
         distance: DistanceOptions = "cosine",
         eig_solver: EigSolverOptions = "svd_lowrank",
         chunk_size: int = 8192,
@@ -109,9 +106,7 @@ class DistanceRealization(OnlineNystromSubsampleFit):
         """
         Args:
             n_components (int): number of top eigenvectors to return
-            num_sample (int): number of samples for Nystrom-like approximation,
-                reduce only if memory is not enough, increase for better approximation
-            sample_method (str): subgraph sampling, ['farthest', 'random'].
+            sample_config (str): subgraph sampling, ['farthest', 'random'].
                 farthest point sampling is recommended for better Nystrom-approximation accuracy
             distance (str): distance metric for affinity matrix, ['cosine', 'euclidean', 'rbf'].
             eig_solver (str): eigen decompose solver, ['svd_lowrank', 'lobpcg', 'svd', 'eigh'].
@@ -121,9 +116,8 @@ class DistanceRealization(OnlineNystromSubsampleFit):
             self,
             n_components=n_components,
             kernel=GramKernel(distance, eig_solver),
-            num_sample=num_sample,
             distance=distance,
-            sample_method=sample_method,
+            sample_config=sample_config,
             eig_solver=eig_solver,
             chunk_size=chunk_size,
         )
@@ -138,5 +132,5 @@ class DistanceRealization(OnlineNystromSubsampleFit):
         return V * (L ** 0.5)
 
     def transform(self, features: torch.Tensor = None) -> torch.Tensor:
-        V, L = OnlineNystromSubsampleFit.transform(features)
+        V, L = OnlineNystromSubsampleFit.transform(self, features)
         return V * (L ** 0.5)

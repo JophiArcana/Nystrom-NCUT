@@ -1,12 +1,8 @@
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 import torch
 import torch.nn.functional as Fn
-
-
-DistanceOptions = Literal["cosine", "euclidean", "rbf"]
-SampleOptions = Literal["farthest", "random"]
 
 
 def ceildiv(a: int, b: int) -> int:
@@ -22,15 +18,6 @@ def lazy_normalize(x: torch.Tensor, n: int = 1000, **normalize_kwargs: Any) -> t
         return x
     else:
         return Fn.normalize(x, **normalize_kwargs)
-
-
-def to_euclidean(x: torch.Tensor, disttype: DistanceOptions) -> torch.Tensor:
-    if disttype == "cosine":
-        return lazy_normalize(x, p=2, dim=-1)
-    elif disttype == "rbf":
-        return x
-    else:
-        raise ValueError(f"to_euclidean not implemented for disttype {disttype}.")
 
 
 def quantile_min_max(x: torch.Tensor, q1: float, q2: float, n_sample: int = 10000):
@@ -68,3 +55,7 @@ def quantile_normalize(x: torch.Tensor, q: float = 0.95):
     x = (x - vmin) / (vmax - vmin)
     x = x.clamp(0, 1)
     return x
+
+
+def profile(name: str, t: torch.Tensor) -> None:
+    print(f"{name} --- nan: {t.isnan().any()}, inf: {t.isinf().any()}, max: {t.abs().max()}, min: {t.abs().min()}")

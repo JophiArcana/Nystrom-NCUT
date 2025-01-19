@@ -1,14 +1,17 @@
+import copy
 import logging
 from typing import Literal, Tuple
 
 import torch
 
 from ..common import (
-    DistanceOptions,
-    SampleOptions,
     ceildiv,
 )
-from ..propagation_utils import (
+from ..distance_utils import (
+    DistanceOptions,
+)
+from ..sampling_utils import (
+    SampleConfig,
     run_subgraph_sampling,
 )
 
@@ -145,9 +148,8 @@ class OnlineNystromSubsampleFit(OnlineNystrom):
         self,
         n_components: int,
         kernel: OnlineKernel,
-        num_sample: int,
         distance: DistanceOptions,
-        sample_method: SampleOptions,
+        sample_config: SampleConfig,
         eig_solver: EigSolverOptions = "svd_lowrank",
         chunk_size: int = 8192,
     ):
@@ -158,9 +160,9 @@ class OnlineNystromSubsampleFit(OnlineNystrom):
             eig_solver=eig_solver,
             chunk_size=chunk_size,
         )
-        self.num_sample: int = num_sample
         self.distance: DistanceOptions = distance
-        self.sample_method: SampleOptions = sample_method
+        self.sample_config: SampleConfig = sample_config
+        self.sample_config._ncut_obj = copy.deepcopy(self)
         self.anchor_indices: torch.Tensor = None
 
     def _fit_helper(
@@ -169,7 +171,7 @@ class OnlineNystromSubsampleFit(OnlineNystrom):
         precomputed_sampled_indices: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         _n = features.shape[0]
-        if self.num_sample >= _n:
+        if self.sample_config.num_sample >= _n:
             logging.info(
                 f"NCUT nystrom num_sample is larger than number of input samples, nyström approximation is not needed, setting num_sample={_n}"
             )
@@ -180,9 +182,8 @@ class OnlineNystromSubsampleFit(OnlineNystrom):
         else:
             self.anchor_indices = run_subgraph_sampling(
                 features=features,
-                num_sample=self.num_sample,
                 disttype=self.distance,
-                sample_method=self.sample_method,
+                config=self.sample_config,
             )
         sampled_features = features[self.anchor_indices]
         OnlineNystrom.fit(self, sampled_features)
@@ -243,6 +244,7 @@ def solve_eig(
     A: torch.Tensor,
     num_eig: int,
     eig_solver: EigSolverOptions,
+    eig_value_buffer: float = 0.0,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """PyTorch implementation of Eigensolver cut without Nystrom-like approximation.
 
@@ -250,11 +252,13 @@ def solve_eig(
         A (torch.Tensor): input matrix, shape (n_samples, n_samples)
         num_eig (int): number of eigenvectors to return
         eig_solver (str): eigen decompose solver, ['svd_lowrank', 'lobpcg', 'svd', 'eigh']
-
+        eig_value_buffer (float): value added to diagonal to buffer symmetric but non-PSD matrices
     Returns:
         (torch.Tensor): eigenvectors corresponding to the eigenvalues, shape (n_samples, num_eig)
         (torch.Tensor): eigenvalues of the eigenvectors, sorted in descending order
     """
+    A = A + eig_value_buffer * torch.eye(A.shape[0], device=A.device)
+
     # compute eigenvectors
     if eig_solver == "svd_lowrank":  # default
         # only top q eigenvectors, fastest
@@ -272,15 +276,14 @@ def solve_eig(
         raise ValueError(
             "eigen_solver should be 'lobpcg', 'svd_lowrank', 'svd' or 'eigh'"
         )
+    eigen_value = eigen_value - eig_value_buffer
 
     # sort eigenvectors by eigenvalues, take top (descending order)
-    eigen_value = eigen_value.real
-    eigen_vector = eigen_vector.real
-    eigen_value, indices = torch.topk(eigen_value, k=num_eig, dim=0)
-    eigen_vector = eigen_vector[:, indices]
+    indices = torch.topk(eigen_value.abs(), k=num_eig, dim=0).indices
+    eigen_value, eigen_vector = eigen_value[indices], eigen_vector[:, indices]
 
     # correct the random rotation (flipping sign) of eigenvectors
-    sign = torch.sum(eigen_vector, dim=0).sign()
+    sign = torch.sum(eigen_vector.real, dim=0).sign()
     sign[sign == 0] = 1.0
     eigen_vector = eigen_vector * sign
     return eigen_vector, eigen_value
