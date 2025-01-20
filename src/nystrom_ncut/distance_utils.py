@@ -38,14 +38,14 @@ def distance_from_features(
     elif distance == "euclidean":
         D = torch.cdist(features, features_B, p=2)
     elif distance == "rbf":
-        D = torch.cdist(features, features_B, p=2) ** 2
+        D = 0.5 * torch.cdist(features, features_B, p=2) ** 2
 
         # Outlier-robust scale invariance using quantiles to estimate standard deviation
         c = 2.0
         p = torch.erf(torch.tensor((-c, c), device=features.device) * (2 ** -0.5))
         stds = torch.quantile(features, q=(p + 1) / 2, dim=0)
         stds = (stds[1] - stds[0]) / (2 * c)
-        D = D / (2 * torch.linalg.norm(stds) ** 2)
+        D = D / (torch.linalg.norm(stds) ** 2)
     else:
         raise ValueError("distance should be 'cosine' or 'euclidean', 'rbf'")
     return D

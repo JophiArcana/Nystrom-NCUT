@@ -98,8 +98,8 @@ class DistanceRealization(OnlineNystromSubsampleFit):
     def __init__(
         self,
         n_components: int = 100,
-        sample_config: SampleConfig = SampleConfig(),
         distance: DistanceOptions = "cosine",
+        sample_config: SampleConfig = SampleConfig(),
         eig_solver: EigSolverOptions = "svd_lowrank",
         chunk_size: int = 8192,
     ):
