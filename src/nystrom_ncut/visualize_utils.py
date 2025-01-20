@@ -19,7 +19,7 @@ from .distance_utils import (
 )
 from .sampling_utils import (
     SampleConfig,
-    run_subgraph_sampling,
+    subsample_features,
 )
 
 
@@ -120,7 +120,7 @@ def extrapolate_knn_with_subsampling(
     device = full_output.device if device is None else device
 
     # sample subgraph
-    anchor_indices = run_subgraph_sampling(
+    anchor_indices = subsample_features(
         features=full_features,
         disttype=distance,
         config=sample_config,
@@ -160,7 +160,7 @@ def _rgb_with_dimensionality_reduction(
 ) -> torch.Tensor:
 
     if True:
-        _subgraph_indices = run_subgraph_sampling(
+        _subgraph_indices = subsample_features(
             features=features,
             disttype=disttype,
             config=SampleConfig(method="fps"),
@@ -172,7 +172,7 @@ def _rgb_with_dimensionality_reduction(
             distance=disttype,
         )
 
-    subgraph_indices = run_subgraph_sampling(
+    subgraph_indices = subsample_features(
         features=features,
         disttype=disttype,
         config=SampleConfig(method="fps", num_sample=num_sample),

@@ -41,7 +41,9 @@ def distance_from_features(
         D = torch.cdist(features, features_B, p=2) ** 2
 
         # Outlier-robust scale invariance using quantiles to estimate standard deviation
-        stds = torch.quantile(features, q=torch.tensor((0.158655, 0.841345), device=features.device), dim=0)
+        c = 2.0
+        p = torch.erf(torch.tensor((-c, c), device=features.device) * (2 ** -0.5))
+        stds = torch.quantile(features, q=(p + 1) / 2, dim=0)
         stds = (stds[1] - stds[0]) / 2
         D = D / (2 * torch.linalg.norm(stds) ** 2)
     else:

@@ -8,6 +8,7 @@ from .distance_utils import (
 )
 from .sampling_utils import (
     SampleConfig,
+    subsample_features,
 )
 from .visualize_utils import (
     extrapolate_knn,

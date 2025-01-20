@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import torch
-from dgl.geometry import farthest_point_sampler
+from pytorch3d.ops import sample_farthest_points
 
 from .distance_utils import (
     DistanceOptions,
@@ -25,12 +25,13 @@ class SampleConfig:
 
 
 @torch.no_grad()
-def run_subgraph_sampling(
+def subsample_features(
     features: torch.Tensor,
     disttype: DistanceOptions,
     config: SampleConfig,
     max_draw: int = 1000000,
 ):
+    return torch.arange(min(features.shape[0], config.num_sample), device=features.device)
     features = features.detach()
     if config.num_sample >= features.shape[0]:
         # if too many samples, use all samples and bypass Nystrom-like approximation
@@ -57,7 +58,7 @@ def run_subgraph_sampling(
 
         elif config.method == "fps_recursive":
             features = to_euclidean(features, disttype)
-            sampled_indices = run_subgraph_sampling(
+            sampled_indices = subsample_features(
                 features=features,
                 disttype=disttype,
                 config=SampleConfig(method="fps", num_sample=config.num_sample, fps_dim=config.fps_dim)
@@ -69,7 +70,17 @@ def run_subgraph_sampling(
             R = torch.diag(torch.sum(A, dim=-1) ** -0.5)
             L = R @ A @ R
 
+            from matplotlib import pyplot as plt
+
+            def plot(indices, it):
+                plt.scatter(*features.mT, color="red")
+                plt.scatter(*features[indices].mT, color="black")
+                plt.title(f"Iteration {it}")
+                plt.show()
+
             for _ in range(config.n_iter):
+                plot(sampled_indices, _)
+
                 fps_features, eigenvalues = nc.fit_transform(features, precomputed_sampled_indices=sampled_indices)
 
                 _L = fps_features @ torch.diag(eigenvalues) @ fps_features.mT
@@ -78,6 +89,8 @@ def run_subgraph_sampling(
                 print(f"Iteration {_} --- max: {RE.max().item()}, mean: {RE.mean().item()}, min: {RE.min().item()}")
                 fps_features = to_euclidean(fps_features[:, :config.fps_dim], "cosine")
                 sampled_indices = torch.sort(fpsample(fps_features, config)).values
+
+            plot(sampled_indices, config.n_iter)
         else:
             raise ValueError("sample_method should be 'farthest' or 'random'")
         sampled_indices = torch.sort(sampled_indices).values
@@ -93,4 +106,4 @@ def fpsample(
         U, S, V = torch.pca_lowrank(features, q=config.fps_dim)
         features = U * S
 
-    return farthest_point_sampler(features[None], config.num_sample)[0]
+    return sample_farthest_points(features[None], K=config.num_sample)[1][0]
