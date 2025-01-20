@@ -44,7 +44,7 @@ def distance_from_features(
         c = 2.0
         p = torch.erf(torch.tensor((-c, c), device=features.device) * (2 ** -0.5))
         stds = torch.quantile(features, q=(p + 1) / 2, dim=0)
-        stds = (stds[1] - stds[0]) / 2
+        stds = (stds[1] - stds[0]) / (2 * c)
         D = D / (2 * torch.linalg.norm(stds) ** 2)
     else:
         raise ValueError("distance should be 'cosine' or 'euclidean', 'rbf'")

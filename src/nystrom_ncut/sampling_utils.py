@@ -82,4 +82,7 @@ def fpsample(
         U, S, V = torch.pca_lowrank(features, q=config.fps_dim)
         features = U * S
 
-    return sample_farthest_points(features[None], K=config.num_sample)[1][0]
+    try:
+        return sample_farthest_points(features[None], K=config.num_sample)[1][0]
+    except RuntimeError:
+        return sample_farthest_points(features[None].cpu(), K=config.num_sample)[1][0].to(features.device)
