@@ -231,34 +231,6 @@ class OnlineNystromSubsampleFit(OnlineNystrom):
         unsampled_indices, V_unsampled = OnlineNystromSubsampleFit._fit_helper(self, features, precomputed_sampled_indices)
         V_sampled, L = OnlineNystrom.transform(self)
 
-        from matplotlib import pyplot as plt
-        kernel = self.kernel.transform(features)
-        k = 3
-        topk = torch.topk(kernel, k=k, dim=1)
-        for i, topi in enumerate(torch.unbind(topk.values, dim=1), start=1):
-            plt.plot(topi, label=f"top{i}")
-        plt.plot(torch.mean(kernel, dim=1), label="mean")
-        plt.plot(torch.median(kernel, dim=1).values, label="median")
-        plt.plot(torch.min(kernel, dim=1).values, label="min")
-        plt.legend()
-        plt.show()
-
-
-        plt.hist(kernel[:self.sample_config.num_sample].flatten(), bins=30, density=True, alpha=0.2, label="sampled")
-        plt.hist(kernel[self.sample_config.num_sample:].flatten(), bins=30, density=True, alpha=0.2, label="unsampled")
-        plt.legend()
-        plt.show()
-
-        for i in range(3):
-            # kernel = self.kernel.transform(features)
-            # kernel[torch.arange(features.shape[0]), topk.indices[:, i]] = 0
-            kernel[torch.arange(features.shape[0])[:, None], topk.indices[:, :i]] = 0
-            eigenvectors = kernel @ self.transform_matrix
-            plt.scatter(torch.arange(features.shape[0]), torch.linalg.norm(eigenvectors, dim=1), label=f"without_top{i}")
-        plt.legend()
-        plt.show()
-        raise Exception()
-
         if unsampled_indices is not None:
             V = torch.zeros((len(unsampled_indices), self.n_components), device=features.device)
             V[~unsampled_indices] = V_sampled

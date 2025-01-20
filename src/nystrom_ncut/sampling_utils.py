@@ -7,7 +7,6 @@ from pytorch3d.ops import sample_farthest_points
 
 from .distance_utils import (
     DistanceOptions,
-    affinity_from_features,
     to_euclidean,
 )
 
@@ -31,7 +30,6 @@ def subsample_features(
     config: SampleConfig,
     max_draw: int = 1000000,
 ):
-    return torch.arange(min(features.shape[0], config.num_sample), device=features.device)
     features = features.detach()
     if config.num_sample >= features.shape[0]:
         # if too many samples, use all samples and bypass Nystrom-like approximation
@@ -63,34 +61,12 @@ def subsample_features(
                 disttype=disttype,
                 config=SampleConfig(method="fps", num_sample=config.num_sample, fps_dim=config.fps_dim)
             )
-
             nc = config._ncut_obj
-
-            A = affinity_from_features(features, affinity_focal_gamma=nc.kernel.affinity_focal_gamma, distance=nc.kernel.distance)
-            R = torch.diag(torch.sum(A, dim=-1) ** -0.5)
-            L = R @ A @ R
-
-            from matplotlib import pyplot as plt
-
-            def plot(indices, it):
-                plt.scatter(*features.mT, color="red")
-                plt.scatter(*features[indices].mT, color="black")
-                plt.title(f"Iteration {it}")
-                plt.show()
-
             for _ in range(config.n_iter):
-                plot(sampled_indices, _)
-
                 fps_features, eigenvalues = nc.fit_transform(features, precomputed_sampled_indices=sampled_indices)
 
-                _L = fps_features @ torch.diag(eigenvalues) @ fps_features.mT
-                RE = torch.abs(_L / L - 1)
-
-                print(f"Iteration {_} --- max: {RE.max().item()}, mean: {RE.mean().item()}, min: {RE.min().item()}")
                 fps_features = to_euclidean(fps_features[:, :config.fps_dim], "cosine")
                 sampled_indices = torch.sort(fpsample(fps_features, config)).values
-
-            plot(sampled_indices, config.n_iter)
         else:
             raise ValueError("sample_method should be 'farthest' or 'random'")
         sampled_indices = torch.sort(sampled_indices).values
