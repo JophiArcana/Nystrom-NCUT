@@ -128,9 +128,9 @@ class DistanceRealization(OnlineNystromSubsampleFit):
         features: torch.Tensor,
         precomputed_sampled_indices: torch.Tensor = None,
     ) -> torch.Tensor:
-        V, L = OnlineNystromSubsampleFit.fit_transform(self, features, precomputed_sampled_indices)
-        return V * (L ** 0.5)
+        V = OnlineNystromSubsampleFit.fit_transform(self, features, precomputed_sampled_indices)
+        return V * (self.eigenvalues_ ** 0.5)
 
     def transform(self, features: torch.Tensor = None) -> torch.Tensor:
-        V, L = OnlineNystromSubsampleFit.transform(self, features)
-        return V * (L ** 0.5)
+        V = OnlineNystromSubsampleFit.transform(self, features)
+        return V * (self.eigenvalues_ ** 0.5)
