@@ -2,10 +2,9 @@ from abc import abstractmethod
 from typing import Any
 
 import torch
-from sklearn.base import TransformerMixin, BaseEstimator
 
 
-class TorchTransformerMixin(TransformerMixin, BaseEstimator):
+class TorchTransformerMixin:
     """Mixin class for all transformers in scikit-learn.
 
     This mixin defines the following functionality:
