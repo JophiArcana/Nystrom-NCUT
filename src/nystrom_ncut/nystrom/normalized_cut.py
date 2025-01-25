@@ -104,7 +104,7 @@ class NCut(OnlineNystromSubsampleFit):
         n_components: int = 100,
         affinity_focal_gamma: float = 1.0,
         distance: DistanceOptions = "cosine",
-        adaptive_scaling: bool = True,
+        adaptive_scaling: bool = False,
         sample_config: SampleConfig = SampleConfig(),
         eig_solver: EigSolverOptions = "svd_lowrank",
         chunk_size: int = 8192,

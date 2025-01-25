@@ -46,7 +46,7 @@ class AxisAlign(TorchTransformerMixin):
         for _ in range(self.max_iter):
             # Discretize the projected eigenvectors
             idx = torch.argmax(normalized_X @ self.R.mT, dim=-1)
-            M = torch.zeros((d, d)).index_add_(0, idx, normalized_X)
+            M = torch.zeros((d, d), device=X.device).index_add_(0, idx, normalized_X)
 
             # Check for convergence
             objective = torch.norm(M)
@@ -62,23 +62,26 @@ class AxisAlign(TorchTransformerMixin):
         if self.sort_method == "count":
             sort_metric = torch.bincount(idx, minlength=d)
         elif self.sort_method == "norm":
-            sort_metric = torch.linalg.norm(X @ self.R.mT, p=2, dim=0)
+            sort_metric = torch.linalg.norm(X @ self.R.mT, dim=0)
         else:
             raise ValueError(f"Invalid sort method {self.sort_method}.")
 
         self.R = self.R[torch.argsort(sort_metric, dim=0, descending=True)]
         return self
 
-    def transform(self, X: torch.Tensor, hard: bool = False) -> torch.Tensor:
+    def transform(self, X: torch.Tensor, normalize: bool = True, hard: bool = False) -> torch.Tensor:
         """
         Args:
             X (torch.Tensor): continuous eigenvectors from NCUT, shape (n, k)
+            normalize (bool): whether to normalize input features before rotating
             hard (bool): whether to return cluster indices of input features or just the rotated features
         Returns:
             torch.Tensor: Discretized eigenvectors, shape (n, k), each row is a one-hot vector.
         """
+        if normalize:
+            X = Fn.normalize(X, p=2, dim=1)
         rotated_X = X @ self.R.mT
         return torch.argmax(rotated_X, dim=1) if hard else rotated_X
 
-    def fit_transform(self, X: torch.Tensor, hard: bool = False) -> torch.Tensor:
-        return self.fit(X).transform(X, hard=hard)
+    def fit_transform(self, X: torch.Tensor, normalize: bool = True, hard: bool = False) -> torch.Tensor:
+        return self.fit(X).transform(X, normalize=normalize, hard=hard)
