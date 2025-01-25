@@ -1,6 +1,5 @@
 import einops
 import torch
-import torch.nn.functional as Fn
 
 from .nystrom_utils import (
     EigSolverOptions,
@@ -131,50 +130,3 @@ class NCut(OnlineNystromSubsampleFit):
             eig_solver=eig_solver,
             chunk_size=chunk_size,
         )
-
-
-def axis_align(eigen_vectors: torch.Tensor, max_iter=300):
-    """Multiclass Spectral Clustering, SX Yu, J Shi, 2003
-
-    Args:
-        eigen_vectors (torch.Tensor): continuous eigenvectors from NCUT, shape (n, k)
-        max_iter (int, optional): Maximum number of iterations.
-
-    Returns:
-        torch.Tensor: Discretized eigenvectors, shape (n, k), each row is a one-hot vector.
-    """
-    # Normalize eigenvectors
-    n, k = eigen_vectors.shape
-    eigen_vectors = Fn.normalize(eigen_vectors, p=2, dim=-1)
-
-    # Initialize R matrix with the first column from a random row of EigenVectors
-    R = torch.empty((k, k), device=eigen_vectors.device)
-    R[0] = eigen_vectors[torch.randint(0, n, (1,))].squeeze()
-
-    # Loop to populate R with k orthogonal directions
-    c = torch.zeros(n, device=eigen_vectors.device)
-    for i in range(1, k):
-        c += torch.abs(eigen_vectors @ R[i - 1])
-        R[i] = eigen_vectors[torch.argmin(c, dim=0)]
-
-    # Iterative optimization loop
-    eps = torch.finfo(torch.float32).eps
-    prev_objective = torch.inf
-    for _ in range(max_iter):
-        # Discretize the projected eigenvectors
-        idx = torch.argmax(eigen_vectors @ R.mT, dim=-1)
-        M = torch.zeros((k, k)).index_add_(0, idx, eigen_vectors)
-
-        # Compute the NCut value
-        objective = torch.norm(M)
-
-        # Check for convergence
-        if torch.abs(objective - prev_objective) < eps:
-            break
-        prev_objective = objective
-
-        # SVD decomposition
-        U, S, Vh = torch.linalg.svd(M, full_matrices=False)
-        R = U @ Vh
-
-    return Fn.one_hot(idx, num_classes=k).to(torch.float), R

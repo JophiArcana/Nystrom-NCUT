@@ -1,10 +1,10 @@
 import logging
-from typing import Any, Callable, Dict, Literal
+from typing import Any, Callable, Dict, Literal, Union
 
 import numpy as np
 import torch
 import torch.nn.functional as Fn
-from sklearn.base import BaseEstimator
+from sklearn.base import TransformerMixin, BaseEstimator
 
 from .common import (
     ceildiv,
@@ -152,7 +152,7 @@ def _rgb_with_dimensionality_reduction(
     rgb_func: Callable[[torch.Tensor, float], torch.Tensor],
     q: float,
     knn: int,
-    reduction: Callable[..., BaseEstimator],
+    reduction: Callable[..., Union[TransformerMixin, BaseEstimator]],
     reduction_dim: int,
     reduction_kwargs: Dict[str, Any],
     seed: int,

@@ -1,5 +1,6 @@
 import copy
 import logging
+from abc import abstractmethod
 from typing import Literal, Tuple
 
 import torch
@@ -14,23 +15,29 @@ from ..sampling_utils import (
     SampleConfig,
     subsample_features,
 )
+from ..transformer import (
+    TorchTransformerMixin,
+)
 
 
 EigSolverOptions = Literal["svd_lowrank", "lobpcg", "svd", "eigh"]
 
 
 class OnlineKernel:
+    @abstractmethod
     def fit(self, features: torch.Tensor) -> "OnlineKernel":                # [n x d]
-        raise NotImplementedError()
+        """"""
 
+    @abstractmethod
     def update(self, features: torch.Tensor) -> torch.Tensor:               # [m x d] -> [m x n]
-        raise NotImplementedError()
+        """"""
 
+    @abstractmethod
     def transform(self, features: torch.Tensor = None) -> torch.Tensor:     # [m x d] -> [m x n]
-        raise NotImplementedError()
+        """"""
 
 
-class OnlineNystrom:
+class OnlineNystrom(TorchTransformerMixin):
     def __init__(
         self,
         n_components: int,

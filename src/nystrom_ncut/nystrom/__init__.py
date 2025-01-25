@@ -3,5 +3,4 @@ from .distance_realization import (
 )
 from .normalized_cut import (
     NCut,
-    axis_align,
 )

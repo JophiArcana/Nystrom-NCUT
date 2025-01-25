@@ -1,6 +1,8 @@
 from .nystrom import (
     NCut,
-    axis_align,
+)
+from .transformer import (
+    AxisAlign,
 )
 from .distance_utils import (
     distance_from_features,
