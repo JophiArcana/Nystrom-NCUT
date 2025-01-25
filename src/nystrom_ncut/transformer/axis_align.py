@@ -1,4 +1,5 @@
 import random
+from typing import Literal
 
 import torch
 import torch.nn.functional as Fn
@@ -13,31 +14,39 @@ class AxisAlign(TorchTransformerMixin):
     Args:
         max_iter (int, optional): Maximum number of iterations.
     """
-    def __init__(self, max_iter: int = 100):
-        self.max_iter = max_iter
+    SortOptions = Literal["count", "norm"]
+
+    def __init__(
+        self,
+        sort_method: SortOptions = "norm",
+        max_iter: int = 100,
+    ):
+        self.sort_method: AxisAlign.SortOptions = sort_method
+        self.max_iter: int = max_iter
+
         self.R: torch.Tensor = None
 
     def fit(self, X: torch.Tensor) -> "AxisAlign":
         # Normalize eigenvectors
         n, d = X.shape
-        X = Fn.normalize(X, p=2, dim=-1)
+        normalized_X = Fn.normalize(X, p=2, dim=-1)
 
         # Initialize R matrix with the first column from a random row of EigenVectors
         self.R = torch.empty((d, d), device=X.device)
-        self.R[0] = X[random.randint(0, n - 1)]
+        self.R[0] = normalized_X[random.randint(0, n - 1)]
 
         # Loop to populate R with k orthogonal directions
         c = torch.zeros((n,), device=X.device)
         for i in range(1, d):
-            c += torch.abs(X @ self.R[i - 1])
-            self.R[i] = X[torch.argmin(c, dim=0)]
+            c += torch.abs(normalized_X @ self.R[i - 1])
+            self.R[i] = normalized_X[torch.argmin(c, dim=0)]
 
         # Iterative optimization loop
         idx, prev_objective = None, torch.inf
         for _ in range(self.max_iter):
             # Discretize the projected eigenvectors
-            idx = torch.argmax(X @ self.R.mT, dim=-1)
-            M = torch.zeros((d, d)).index_add_(0, idx, X)
+            idx = torch.argmax(normalized_X @ self.R.mT, dim=-1)
+            M = torch.zeros((d, d)).index_add_(0, idx, normalized_X)
 
             # Check for convergence
             objective = torch.norm(M)
@@ -49,8 +58,15 @@ class AxisAlign(TorchTransformerMixin):
             U, S, Vh = torch.linalg.svd(M, full_matrices=False)
             self.R = U @ Vh
 
-        # Permute the rotation matrix so the dimensions are sorted in descending cluster counts
-        self.R = self.R[torch.argsort(torch.bincount(idx, minlength=d), dim=0, descending=True)]
+        # Permute the rotation matrix so the dimensions are sorted in descending cluster significance
+        if self.sort_method == "count":
+            sort_metric = torch.bincount(idx, minlength=d)
+        elif self.sort_method == "norm":
+            sort_metric = torch.linalg.norm(X @ self.R.mT, p=2, dim=0)
+        else:
+            raise ValueError(f"Invalid sort method {self.sort_method}.")
+
+        self.R = self.R[torch.argsort(sort_metric, dim=0, descending=True)]
         return self
 
     def transform(self, X: torch.Tensor, hard: bool = False) -> torch.Tensor:
