@@ -179,14 +179,13 @@ def _rgb_with_dimensionality_reduction(
     )
 
     _inp = features[subgraph_indices].numpy(force=True)
-    _subgraph_embed = reduction(
+    _subgraph_embed = torch.tensor(reduction(
         n_components=reduction_dim,
         metric=disttype,
         random_state=seed,
         **reduction_kwargs
-    ).fit_transform(_inp)
+    ).fit_transform(_inp), device=features.device, dtype=features.dtype)
 
-    _subgraph_embed = torch.tensor(_subgraph_embed, dtype=torch.float32)
     rgb = rgb_func(extrapolate_knn(
         features[subgraph_indices],
         _subgraph_embed,
