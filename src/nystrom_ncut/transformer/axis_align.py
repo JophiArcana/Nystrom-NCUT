@@ -1,4 +1,3 @@
-import random
 from typing import Literal
 
 import torch
@@ -14,7 +13,7 @@ class AxisAlign(TorchTransformerMixin):
     Args:
         max_iter (int, optional): Maximum number of iterations.
     """
-    SortOptions = Literal["count", "norm"]
+    SortOptions = Literal["count", "norm", "marginal_norm"]
 
     def __init__(
         self,
@@ -33,7 +32,7 @@ class AxisAlign(TorchTransformerMixin):
 
         # Initialize R matrix with the first column from a random row of EigenVectors
         self.R = torch.empty((d, d), device=X.device)
-        self.R[0] = normalized_X[random.randint(0, n - 1)]
+        self.R[0] = normalized_X[torch.randint(0, n, (), device=X.device)]
 
         # Loop to populate R with k orthogonal directions
         c = torch.zeros((n,), device=X.device)
@@ -62,7 +61,11 @@ class AxisAlign(TorchTransformerMixin):
         if self.sort_method == "count":
             sort_metric = torch.bincount(idx, minlength=d)
         elif self.sort_method == "norm":
-            sort_metric = torch.linalg.norm(X @ self.R.mT, dim=0)
+            rotated_X = X @ self.R.mT
+            sort_metric = torch.linalg.norm(rotated_X, dim=0)
+        elif self.sort_method == "marginal_norm":
+            rotated_X = X @ self.R.mT
+            sort_metric = torch.zeros((d,), device=X.device).index_add_(0, idx, rotated_X[range(n), idx] ** 2)
         else:
             raise ValueError(f"Invalid sort method {self.sort_method}.")
 
