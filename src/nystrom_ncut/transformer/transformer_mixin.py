@@ -36,6 +36,8 @@ class TorchTransformerMixin:
     >>> transformer.fit_transform(X)
     array([1, 1, 1])
     """
+    def __init__(self):
+        self.is_fitted: bool = False
 
     @abstractmethod
     def fit(self, X: torch.Tensor, **fit_kwargs: Any) -> "TorchTransformerMixin":

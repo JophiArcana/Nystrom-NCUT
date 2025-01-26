@@ -93,6 +93,7 @@ class OnlineNystrom(TorchTransformerMixin):
 
         self.transform_matrix = (U / L)[:, :self.n_components]                                      # [n x n_components]
         self.eigenvalues_ = L[:self.n_components]                                                   # [n_components]
+        self.is_fitted = True
         return U[:, :self.n_components]                                                             # [n x n_components]
 
     def update(self, features: torch.Tensor) -> torch.Tensor:

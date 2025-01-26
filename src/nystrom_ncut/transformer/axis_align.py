@@ -70,6 +70,7 @@ class AxisAlign(TorchTransformerMixin):
             raise ValueError(f"Invalid sort method {self.sort_method}.")
 
         self.R = self.R[torch.argsort(sort_metric, dim=0, descending=True)]
+        self.is_fitted = True
         return self
 
     def transform(self, X: torch.Tensor, normalize: bool = True, hard: bool = False) -> torch.Tensor:
