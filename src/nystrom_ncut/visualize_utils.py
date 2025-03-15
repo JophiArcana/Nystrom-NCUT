@@ -1,5 +1,4 @@
-import logging
-from typing import Any, Callable, Dict, Literal, Union
+from typing import Any, Callable, Dict, Union
 
 import numpy as np
 import torch
@@ -13,7 +12,8 @@ from .common import (
     quantile_normalize,
 )
 from .distance_utils import (
-    DistanceOptions,
+    AffinityOptions,
+    AFFINITY_TO_DISTANCE,
     to_euclidean,
     affinity_from_features,
 )
@@ -27,7 +27,7 @@ def extrapolate_knn(
     anchor_features: torch.Tensor,          # [n x d]
     anchor_output: torch.Tensor,            # [n x d']
     extrapolation_features: torch.Tensor,   # [m x d]
-    distance: DistanceOptions,
+    affinity_type: AffinityOptions,
     knn: int = 10,                          # k
     affinity_focal_gamma: float = 1.0,
     chunk_size: int = 8192,
@@ -41,7 +41,7 @@ def extrapolate_knn(
         anchor_output (torch.Tensor): output from subgraph, shape (num_sample, D)
         extrapolation_features (torch.Tensor): features from existing nodes, shape (new_num_samples, n_features)
         knn (int): number of KNN to propagate eige nvectors
-        distance (str): distance metric, 'cosine' (default) or 'euclidean', 'rbf'
+        affinity_type (str): distance metric, 'cosine' (default) or 'euclidean', 'rbf'
         chunk_size (int): chunk size for matrix multiplication
         device (str): device to use for computation, if None, will not change device
     Returns:
@@ -66,7 +66,7 @@ def extrapolate_knn(
     for _v in torch.chunk(extrapolation_features, n_chunks, dim=0):
         _v = _v.to(device)                                                                              # [_m x d]
 
-        _A = affinity_from_features(anchor_features, _v, affinity_focal_gamma, distance).mT             # [_m x n]
+        _A = affinity_from_features(anchor_features, _v, affinity_focal_gamma, affinity_type).mT        # [_m x n]
         if knn is not None:
             _A, indices = _A.topk(k=knn, dim=-1, largest=True)                                          # [_m x k], [_m x k]
             _anchor_output = anchor_output[indices]                                                     # [_m x k x d]
@@ -90,7 +90,7 @@ def extrapolate_knn_with_subsampling(
     full_output: torch.Tensor,              # [n x d']
     extrapolation_features: torch.Tensor,   # [m x d]
     sample_config: SampleConfig,
-    distance: DistanceOptions,
+    affinity_type: AffinityOptions,
     knn: int = 10,                          # k
     affinity_focal_gamma: float = 1.0,
     chunk_size: int = 8192,
@@ -122,7 +122,7 @@ def extrapolate_knn_with_subsampling(
     # sample subgraph
     anchor_indices = subsample_features(
         features=full_features,
-        disttype=distance,
+        distance_type=AFFINITY_TO_DISTANCE[affinity_type],
         config=sample_config,
     )
 
@@ -135,7 +135,7 @@ def extrapolate_knn_with_subsampling(
         anchor_features,
         anchor_output,
         extrapolation_features,
-        distance,
+        affinity_type,
         knn=knn,
         affinity_focal_gamma=affinity_focal_gamma,
         chunk_size=chunk_size,
@@ -148,7 +148,7 @@ def extrapolate_knn_with_subsampling(
 def _rgb_with_dimensionality_reduction(
     features: torch.Tensor,
     num_sample: int,
-    disttype: Literal["cosine", "euclidean"],
+    affinity_type: AffinityOptions,
     rgb_func: Callable[[torch.Tensor, float], torch.Tensor],
     q: float,
     knn: int,
@@ -162,26 +162,26 @@ def _rgb_with_dimensionality_reduction(
     if True:
         _subgraph_indices = subsample_features(
             features=features,
-            disttype=disttype,
+            distance_type=AFFINITY_TO_DISTANCE[affinity_type],
             config=SampleConfig(method="fps"),
         )
         features = extrapolate_knn(
             anchor_features=features[_subgraph_indices],
             anchor_output=features[_subgraph_indices],
             extrapolation_features=features,
-            distance=disttype,
+            affinity_type=affinity_type,
         )
 
     subgraph_indices = subsample_features(
         features=features,
-        disttype=disttype,
+        distance_type=AFFINITY_TO_DISTANCE[affinity_type],
         config=SampleConfig(method="fps", num_sample=num_sample),
     )
 
     _inp = features[subgraph_indices].numpy(force=True)
     _subgraph_embed = torch.tensor(reduction(
         n_components=reduction_dim,
-        metric=disttype,
+        metric=AFFINITY_TO_DISTANCE[affinity_type],
         random_state=seed,
         **reduction_kwargs
     ).fit_transform(_inp), device=features.device, dtype=features.dtype)
@@ -190,7 +190,7 @@ def _rgb_with_dimensionality_reduction(
         features[subgraph_indices],
         _subgraph_embed,
         features,
-        disttype,
+        affinity_type,
         knn=knn,
         device=device,
         move_output_to_cpu=True
@@ -201,7 +201,7 @@ def _rgb_with_dimensionality_reduction(
 def rgb_from_tsne_2d(
     features: torch.Tensor,
     num_sample: int = 1000,
-    disttype: Literal["cosine", "euclidean"] = "cosine",
+    affinity_type: AffinityOptions = "cosine",
     perplexity: int = 150,
     q: float = 0.95,
     knn: int = 10,
@@ -220,16 +220,12 @@ def rgb_from_tsne_2d(
             "sklearn import failed, please install `pip install scikit-learn`"
         )
     num_sample = min(num_sample, features.shape[0])
-    if perplexity > num_sample // 2:
-        logging.warning(
-            f"perplexity is larger than num_sample, set perplexity to {num_sample // 2}"
-        )
-        perplexity = num_sample // 2
+    perplexity = min(perplexity, num_sample // 2)
 
     rgb = _rgb_with_dimensionality_reduction(
         features=features,
         num_sample=num_sample,
-        disttype=disttype,
+        affinity_type=affinity_type,
         rgb_func=rgb_from_2d_colormap,
         q=q,
         knn=knn,
@@ -245,7 +241,7 @@ def rgb_from_tsne_2d(
 def rgb_from_tsne_3d(
     features: torch.Tensor,
     num_sample: int = 1000,
-    disttype: Literal["cosine", "euclidean"] = "cosine",
+    affinity_type: AffinityOptions = "cosine",
     perplexity: int = 150,
     q: float = 0.95,
     knn: int = 10,
@@ -264,16 +260,12 @@ def rgb_from_tsne_3d(
             "sklearn import failed, please install `pip install scikit-learn`"
         )
     num_sample = min(num_sample, features.shape[0])
-    if perplexity > num_sample // 2:
-        logging.warning(
-            f"perplexity is larger than num_sample, set perplexity to {num_sample // 2}"
-        )
-        perplexity = num_sample // 2
+    perplexity = min(perplexity, num_sample // 2)
 
     rgb = _rgb_with_dimensionality_reduction(
         features=features,
         num_sample=num_sample,
-        disttype=disttype,
+        affinity_type=affinity_type,
         rgb_func=rgb_from_3d_rgb_cube,
         q=q,
         knn=knn,
@@ -289,7 +281,7 @@ def rgb_from_tsne_3d(
 def rgb_from_euclidean_tsne_3d(
     features: torch.Tensor,
     num_sample: int = 1000,
-    disttype: Literal["cosine", "euclidean"] = "cosine",
+    affinity_type: AffinityOptions = "cosine",
     perplexity: int = 150,
     q: float = 0.95,
     knn: int = 10,
@@ -308,19 +300,15 @@ def rgb_from_euclidean_tsne_3d(
             "sklearn import failed, please install `pip install scikit-learn`"
         )
     num_sample = min(num_sample, features.shape[0])
-    if perplexity > num_sample // 2:
-        logging.warning(
-            f"perplexity is larger than num_sample, set perplexity to {num_sample // 2}"
-        )
-        perplexity = num_sample // 2
+    perplexity = min(perplexity, num_sample // 2)
 
     def rgb_func(X_3d: torch.Tensor, q: float) -> torch.Tensor:
-        return rgb_from_3d_rgb_cube(to_euclidean(X_3d, disttype), q=q)
+        return rgb_from_3d_rgb_cube(to_euclidean(X_3d, AFFINITY_TO_DISTANCE[affinity_type]), q=q)
 
     rgb = _rgb_with_dimensionality_reduction(
         features=features,
         num_sample=num_sample,
-        disttype="cosine",
+        affinity_type=affinity_type,
         rgb_func=rgb_func,
         q=q,
         knn=knn,
@@ -336,7 +324,7 @@ def rgb_from_euclidean_tsne_3d(
 def rgb_from_umap_2d(
     features: torch.Tensor,
     num_sample: int = 1000,
-    disttype: Literal["cosine", "euclidean"] = "cosine",
+    affinity_type: AffinityOptions = "cosine",
     n_neighbors: int = 150,
     min_dist: float = 0.1,
     q: float = 0.95,
@@ -357,7 +345,7 @@ def rgb_from_umap_2d(
     rgb = _rgb_with_dimensionality_reduction(
         features=features,
         num_sample=num_sample,
-        disttype=disttype,
+        affinity_type=affinity_type,
         rgb_func=rgb_from_2d_colormap,
         q=q,
         knn=knn,
@@ -374,7 +362,7 @@ def rgb_from_umap_2d(
 def rgb_from_umap_sphere(
     features: torch.Tensor,
     num_sample: int = 1000,
-    disttype: Literal["cosine", "euclidean"] = "cosine",
+    affinity_type: AffinityOptions = "cosine",
     n_neighbors: int = 150,
     min_dist: float = 0.1,
     q: float = 0.95,
@@ -402,7 +390,7 @@ def rgb_from_umap_sphere(
     rgb = _rgb_with_dimensionality_reduction(
         features=features,
         num_sample=num_sample,
-        disttype=disttype,
+        affinity_type=affinity_type,
         rgb_func=rgb_func,
         q=q,
         knn=knn,
@@ -420,7 +408,7 @@ def rgb_from_umap_sphere(
 def rgb_from_umap_3d(
     features: torch.Tensor,
     num_sample: int = 1000,
-    disttype: Literal["cosine", "euclidean"] = "cosine",
+    affinity_type: AffinityOptions = "cosine",
     n_neighbors: int = 150,
     min_dist: float = 0.1,
     q: float = 0.95,
@@ -441,7 +429,7 @@ def rgb_from_umap_3d(
     rgb = _rgb_with_dimensionality_reduction(
         features=features,
         num_sample=num_sample,
-        disttype=disttype,
+        affinity_type=affinity_type,
         rgb_func=rgb_from_3d_rgb_cube,
         q=q,
         knn=knn,

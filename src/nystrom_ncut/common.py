@@ -12,8 +12,8 @@ def ceildiv(a: int, b: int) -> int:
 def lazy_normalize(x: torch.Tensor, n: int = 1000, **normalize_kwargs: Any) -> torch.Tensor:
     numel = np.prod(x.shape[:-1])
     n = min(n, numel)
-    random_indices = torch.randperm(numel)[:n]
-    _x = x.flatten(0, -2)[random_indices]
+    random_indices = torch.randperm(numel, device=x.device)[:n]
+    _x = x.view((-1, x.shape[-1]))[random_indices]
     if torch.allclose(torch.norm(_x, **normalize_kwargs), torch.ones(n, device=x.device)):
         return x
     else:
@@ -21,13 +21,14 @@ def lazy_normalize(x: torch.Tensor, n: int = 1000, **normalize_kwargs: Any) -> t
 
 
 def quantile_min_max(x: torch.Tensor, q1: float, q2: float, n_sample: int = 10000):
-    if x.shape[0] > n_sample:
+    x = x.flatten()
+    if len(x) > n_sample:
         np.random.seed(0)
-        random_idx = np.random.choice(x.shape[0], n_sample, replace=False)
+        random_idx = np.random.choice(len(x), n_sample, replace=False)
         vmin, vmax = x[random_idx].quantile(q1), x[random_idx].quantile(q2)
     else:
         vmin, vmax = x.quantile(q1), x.quantile(q2)
-    return vmin, vmax
+    return vmin.item(), vmax.item()
 
 
 def quantile_normalize(x: torch.Tensor, q: float = 0.95):
@@ -55,6 +56,18 @@ def quantile_normalize(x: torch.Tensor, q: float = 0.95):
     x = (x - vmin) / (vmax - vmin)
     x = x.clamp(0, 1)
     return x
+
+
+class default_device:
+    def __init__(self, device: torch.device):
+        self._device = device
+
+    def __enter__(self):
+        self._original_device = torch.get_default_device()
+        torch.set_default_device(self._device)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        torch.set_default_device(self._original_device)
 
 
 def profile(name: str, t: torch.Tensor) -> None:

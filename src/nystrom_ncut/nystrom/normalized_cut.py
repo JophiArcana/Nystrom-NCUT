@@ -8,7 +8,8 @@ from .nystrom_utils import (
     solve_eig,
 )
 from ..distance_utils import (
-    DistanceOptions,
+    AffinityOptions,
+    AFFINITY_TO_DISTANCE,
     affinity_from_features,
 )
 from ..sampling_utils import (
@@ -20,80 +21,83 @@ class LaplacianKernel(OnlineKernel):
     def __init__(
         self,
         affinity_focal_gamma: float,
-        distance: DistanceOptions,
+        affinity_type: AffinityOptions,
         adaptive_scaling: bool,
         eig_solver: EigSolverOptions,
     ):
         self.affinity_focal_gamma = affinity_focal_gamma
-        self.distance: DistanceOptions = distance
+        self.affinity_type: AffinityOptions = affinity_type
         self.adaptive_scaling: bool = adaptive_scaling
         self.eig_solver: EigSolverOptions = eig_solver
 
         # Anchor matrices
-        self.anchor_features: torch.Tensor = None               # [n x d]
-        self.A: torch.Tensor = None                             # [n x n]
-        self.Ainv: torch.Tensor = None                          # [n x n]
+        self.anchor_features: torch.Tensor = None                                   # [... x n x d]
+        self.anchor_mask: torch.Tensor = None
+        self.A: torch.Tensor = None                                                 # [... x n x n]
+        self.Ainv: torch.Tensor = None                                              # [... x n x n]
 
         # Updated matrices
-        self.a_r: torch.Tensor = None                           # [n]
-        self.b_r: torch.Tensor = None                           # [n]
+        self.a_r: torch.Tensor = None                                               # [... x n]
+        self.b_r: torch.Tensor = None                                               # [... x n]
 
     def fit(self, features: torch.Tensor) -> None:
-        self.anchor_features = features                         # [n x d]
-        self.A = affinity_from_features(
-            self.anchor_features,                               # [n x d]
+        self.anchor_features = features                                             # [... x n x d]
+        self.anchor_mask = torch.all(torch.isnan(self.anchor_features), dim=-1)     # [... x n]
+
+        self.A = torch.nan_to_num(affinity_from_features(
+            self.anchor_features,                                                   # [... x n x d]
             affinity_focal_gamma=self.affinity_focal_gamma,
-            distance=self.distance,
-        )                                                       # [n x n]
+            affinity_type=self.affinity_type,
+        ), nan=0.0)                                                                 # [... x n x n]
         d = features.shape[-1]
         U, L = solve_eig(
             self.A,
             num_eig=d + 1,  # d * (d + 3) // 2 + 1,
             eig_solver=self.eig_solver,
-        )                                                       # [n x (d + 1)], [d + 1]
-        self.Ainv = U @ torch.diag(1 / L) @ U.mT                # [n x n]
-        self.a_r = torch.sum(self.A, dim=-1)                    # [n]
-        self.b_r = torch.zeros_like(self.a_r)                   # [n]
+        )                                                                           # [... x n x (d + 1)], [... x (d + 1)]
+        self.Ainv = U @ torch.diag_embed(1 / L) @ U.mT                              # [... x n x n]
+        self.a_r = torch.where(self.anchor_mask, torch.inf, torch.sum(self.A, dim=-1))  # [... x n]
+        self.b_r = torch.zeros_like(self.a_r)                                       # [... x n]
 
     def _affinity(self, features: torch.Tensor) -> torch.Tensor:
-        B = affinity_from_features(
-            self.anchor_features,                               # [n x d]
-            features,                                           # [m x d]
+        B = torch.where(self.anchor_mask[..., None], 0.0, affinity_from_features(
+            self.anchor_features,                                                   # [... x n x d]
+            features,                                                               # [... x m x d]
             affinity_focal_gamma=self.affinity_focal_gamma,
-            distance=self.distance,
-        )                                                       # [n x m]
+            affinity_type=self.affinity_type,
+        ))                                                                          # [... x n x m]
         if self.adaptive_scaling:
             diagonal = (
-                einops.rearrange(B, "n m -> m 1 n")             # [m x 1 x n]
-                @ self.Ainv                                     # [n x n]
-                @ einops.rearrange(B, "n m -> m n 1")           # [m x n x 1]
-            ).squeeze(1, 2)                                     # [m]
-            adaptive_scale = diagonal ** -0.5                   # [m]
-            B = B * adaptive_scale
-        return B                                                # [n x m]
+                einops.rearrange(B, "... n m -> ... m 1 n")                         # [... x m x 1 x n]
+                @ self.Ainv                                                         # [... x n x n]
+                @ einops.rearrange(B, "... n m -> ... m n 1")                       # [... x m x n x 1]
+            ).squeeze(-2, -1)                                                       # [... x m]
+            adaptive_scale = diagonal ** -0.5                                       # [... x m]
+            B = B * adaptive_scale[..., None, :]
+        return B                                                                    # [... x n x m]
 
     def update(self, features: torch.Tensor) -> torch.Tensor:
-        B = self._affinity(features)                            # [n x m]
-        b_r = torch.sum(B, dim=-1)                              # [n]
-        b_c = torch.sum(B, dim=-2)                              # [m]
-        self.b_r = self.b_r + b_r                               # [n]
+        B = self._affinity(features)                                                # [... x n x m]
+        b_r = torch.sum(torch.nan_to_num(B, nan=0.0), dim=-1)                       # [... x n]
+        b_c = torch.sum(B, dim=-2)                                                  # [... x m]
+        self.b_r = self.b_r + b_r                                                   # [... x n]
 
-        row_sum = self.a_r + self.b_r                           # [n]
-        col_sum = b_c + B.mT @ self.Ainv @ self.b_r             # [m]
-        scale = (row_sum[:, None] * col_sum) ** -0.5            # [n x m]
-        return (B * scale).mT                                   # [m x n]
+        row_sum = self.a_r + self.b_r                                               # [... x n]
+        col_sum = b_c + (B.mT @ (self.Ainv @ self.b_r[..., None]))[..., 0]          # [... x m]
+        scale = (row_sum[..., :, None] * col_sum[..., None, :]) ** -0.5             # [... x n x m]
+        return (B * scale).mT                                                       # [... x m x n]
 
     def transform(self, features: torch.Tensor = None) -> torch.Tensor:
-        row_sum = self.a_r + self.b_r                           # [n]
+        row_sum = self.a_r + self.b_r                                               # [... x n]
         if features is None:
-            B = self.A                                          # [n x n]
-            col_sum = row_sum                                   # [n]
+            B = self.A                                                              # [... x n x n]
+            col_sum = row_sum                                                       # [... x n]
         else:
             B = self._affinity(features)
-            b_c = torch.sum(B, dim=-2)                          # [m]
-            col_sum = b_c + B.mT @ self.Ainv @ self.b_r         # [m]
-        scale = (row_sum[:, None] * col_sum) ** -0.5            # [n x m]
-        return (B * scale).mT                                   # [m x n]
+            b_c = torch.sum(B, dim=-2)                                              # [... x m]
+            col_sum = b_c + (B.mT @ (self.Ainv @ self.b_r[..., None]))[..., 0]      # [... x m]
+        scale = (row_sum[..., :, None] * col_sum[..., None, :]) ** -0.5             # [... x n x m]
+        return (B * scale).mT                                                       # [... x m x n]
 
 
 class NCut(OnlineNystromSubsampleFit):
@@ -103,7 +107,7 @@ class NCut(OnlineNystromSubsampleFit):
         self,
         n_components: int = 100,
         affinity_focal_gamma: float = 1.0,
-        distance: DistanceOptions = "cosine",
+        affinity_type: AffinityOptions = "cosine",
         adaptive_scaling: bool = False,
         sample_config: SampleConfig = SampleConfig(),
         eig_solver: EigSolverOptions = "svd_lowrank",
@@ -124,8 +128,8 @@ class NCut(OnlineNystromSubsampleFit):
         OnlineNystromSubsampleFit.__init__(
             self,
             n_components=n_components,
-            kernel=LaplacianKernel(affinity_focal_gamma, distance, adaptive_scaling, eig_solver),
-            distance=distance,
+            kernel=LaplacianKernel(affinity_focal_gamma, affinity_type, adaptive_scaling, eig_solver),
+            distance_type=AFFINITY_TO_DISTANCE[affinity_type],
             sample_config=sample_config,
             eig_solver=eig_solver,
             chunk_size=chunk_size,

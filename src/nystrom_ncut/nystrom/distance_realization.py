@@ -18,10 +18,10 @@ from ..sampling_utils import (
 class GramKernel(OnlineKernel):
     def __init__(
         self,
-        distance: DistanceOptions,
+        distance_type: DistanceOptions,
         eig_solver: EigSolverOptions,
     ):
-        self.distance: DistanceOptions = distance
+        self.distance_type: DistanceOptions = distance_type
         self.eig_solver: EigSolverOptions = eig_solver
 
         # Anchor matrices
@@ -40,7 +40,7 @@ class GramKernel(OnlineKernel):
         self.A = -0.5 * distance_from_features(
             self.anchor_features,                               # [n x d]
             self.anchor_features,
-            distance=self.distance,
+            distance_type=self.distance_type,
         )                                                       # [n x n]
         d = features.shape[-1]
         U, L = solve_eig(
@@ -58,7 +58,7 @@ class GramKernel(OnlineKernel):
         B = -0.5 * distance_from_features(
             self.anchor_features,                               # [n x d]
             features,                                           # [m x d]
-            distance=self.distance,
+            distance_type=self.distance_type,
         )                                                       # [n x m]
         b_r = torch.sum(B, dim=-1)                              # [n]
         b_c = torch.sum(B, dim=-2)                              # [m]
@@ -84,7 +84,7 @@ class GramKernel(OnlineKernel):
             B = -0.5 * distance_from_features(
                 self.anchor_features,
                 features,
-                distance=self.distance,
+                distance_type=self.distance_type,
             )
             b_c = torch.sum(B, dim=-2)                          # [m]
             col_sum = b_c + B.mT @ self.Ainv @ self.b_r         # [m]
@@ -98,7 +98,7 @@ class DistanceRealization(OnlineNystromSubsampleFit):
     def __init__(
         self,
         n_components: int = 100,
-        distance: DistanceOptions = "cosine",
+        distance_type: DistanceOptions = "cosine",
         sample_config: SampleConfig = SampleConfig(),
         eig_solver: EigSolverOptions = "svd_lowrank",
         chunk_size: int = 8192,
@@ -115,13 +115,12 @@ class DistanceRealization(OnlineNystromSubsampleFit):
         OnlineNystromSubsampleFit.__init__(
             self,
             n_components=n_components,
-            kernel=GramKernel(distance, eig_solver),
-            distance=distance,
+            kernel=GramKernel(distance_type, eig_solver),
+            distance_type=distance_type,
             sample_config=sample_config,
             eig_solver=eig_solver,
             chunk_size=chunk_size,
         )
-        self.distance: DistanceOptions = distance
 
     def fit_transform(
         self,
