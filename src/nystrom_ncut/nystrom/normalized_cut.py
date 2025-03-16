@@ -54,10 +54,10 @@ class LaplacianKernel(OnlineKernel):
             self.A,
             num_eig=d + 1,  # d * (d + 3) // 2 + 1,
             eig_solver=self.eig_solver,
-        )                                                                           # [... x n x (d + 1)], [... x (d + 1)]
-        self.Ainv = U @ torch.diag_embed(1 / L) @ U.mT                              # [... x n x n]
-        self.a_r = torch.where(self.anchor_mask, torch.inf, torch.sum(self.A, dim=-1))  # [... x n]
-        self.b_r = torch.zeros_like(self.a_r)                                       # [... x n]
+        )                                                                                           # [... x n x (d + 1)], [... x (d + 1)]
+        self.Ainv = U @ torch.nan_to_num(torch.diag_embed(1 / L), posinf=0.0, neginf=0.0) @ U.mT    # [... x n x n]
+        self.a_r = torch.where(self.anchor_mask, torch.inf, torch.sum(self.A, dim=-1))              # [... x n]
+        self.b_r = torch.zeros_like(self.a_r)                                                       # [... x n]
 
     def _affinity(self, features: torch.Tensor) -> torch.Tensor:
         B = torch.where(self.anchor_mask[..., None], 0.0, affinity_from_features(
