@@ -269,7 +269,7 @@ def solve_eig(
     bsz: int = A.shape[0]
 
     A = A + eig_value_buffer * torch.eye(A.shape[-1], device=A.device)
-
+    num_eig = min(A.shape[-1], num_eig)
     # compute eigenvectors
     if eig_solver == "svd_lowrank":  # default
         # only top q eigenvectors, fastest
