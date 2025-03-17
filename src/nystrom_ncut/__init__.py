@@ -1,5 +1,8 @@
+from .kernel import (
+    KernelNCut,
+)
 from .nystrom import (
-    NCut,
+    NystromNCut,
 )
 from .transformer import (
     AxisAlign,

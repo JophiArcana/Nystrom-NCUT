@@ -17,6 +17,9 @@ from .distance_utils import (
     to_euclidean,
     affinity_from_features,
 )
+from .global_settings import (
+    CHUNK_SIZE,
+)
 from .sampling_utils import (
     SampleConfig,
     subsample_features,
@@ -30,7 +33,6 @@ def extrapolate_knn(
     affinity_type: AffinityOptions,
     knn: int = 10,                          # k
     affinity_focal_gamma: float = 1.0,
-    chunk_size: int = 8192,
     device: str = None,
     move_output_to_cpu: bool = False,
 ) -> torch.Tensor:                          # [m x d']
@@ -42,7 +44,6 @@ def extrapolate_knn(
         extrapolation_features (torch.Tensor): features from existing nodes, shape (new_num_samples, n_features)
         knn (int): number of KNN to propagate eige nvectors
         affinity_type (str): distance metric, 'cosine' (default) or 'euclidean', 'rbf'
-        chunk_size (int): chunk size for matrix multiplication
         device (str): device to use for computation, if None, will not change device
     Returns:
         torch.Tensor: propagated eigenvectors, shape (new_num_samples, D)
@@ -61,12 +62,17 @@ def extrapolate_knn(
     # propagate eigen_vector from subgraph to full graph
     anchor_output = anchor_output.to(device)
 
-    n_chunks = ceildiv(extrapolation_features.shape[0], chunk_size)
+    n_chunks = ceildiv(extrapolation_features.shape[0], CHUNK_SIZE)
     V_list = []
     for _v in torch.chunk(extrapolation_features, n_chunks, dim=0):
         _v = _v.to(device)                                                                              # [_m x d]
 
-        _A = affinity_from_features(anchor_features, _v, affinity_focal_gamma, affinity_type).mT        # [_m x n]
+        _A = affinity_from_features(
+            features_A=anchor_features,
+            features_B=_v,
+            affinity_type=affinity_type,
+            affinity_focal_gamma=affinity_focal_gamma,
+        ).mT                                                                                            # [_m x n]
         if knn is not None:
             _A, indices = _A.topk(k=knn, dim=-1, largest=True)                                          # [_m x k], [_m x k]
             _anchor_output = anchor_output[indices]                                                     # [_m x k x d]
@@ -93,7 +99,6 @@ def extrapolate_knn_with_subsampling(
     affinity_type: AffinityOptions,
     knn: int = 10,                          # k
     affinity_focal_gamma: float = 1.0,
-    chunk_size: int = 8192,
     device: str = None,
     move_output_to_cpu: bool = False,
 ) -> torch.Tensor:                          # [m x d']
@@ -104,7 +109,6 @@ def extrapolate_knn_with_subsampling(
         extrapolation_features (torch.Tensor): features from new nodes, shape (n_new_samples, n_features)
         knn (int): number of KNN to propagate eigenvectors, default 3
         sample_config (str): sample method, 'farthest' (default) or 'random'
-        chunk_size (int): chunk size for matrix multiplication, default 8192
         device (str): device to use for computation, if None, will not change device
     Returns:
         torch.Tensor: propagated eigenvectors, shape (n_new_samples, num_eig)
@@ -138,7 +142,6 @@ def extrapolate_knn_with_subsampling(
         affinity_type,
         knn=knn,
         affinity_focal_gamma=affinity_focal_gamma,
-        chunk_size=chunk_size,
         device=device,
         move_output_to_cpu=move_output_to_cpu,
     )

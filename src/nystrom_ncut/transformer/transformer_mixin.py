@@ -36,15 +36,28 @@ class TorchTransformerMixin:
     >>> transformer.fit_transform(X)
     array([1, 1, 1])
     """
-
     @abstractmethod
-    def fit(self, X: torch.Tensor, **fit_kwargs: Any) -> "TorchTransformerMixin":
+    def fit(self, X: torch.Tensor, **fit_kwargs: Any) -> "OnlineTorchTransformerMixin":
         """"""
 
     @abstractmethod
-    def transform(self, X: torch.Tensor, **transform_kwargs: Any) -> torch.Tensor:
+    def transform(self, X: torch.Tensor = None, **transform_kwargs: Any) -> torch.Tensor:
         """"""
 
     @abstractmethod
-    def fit_transform(self, X: torch.Tensor, **kwargs: Any) -> torch.Tensor:
+    def fit_transform(self, X: torch.Tensor, **fit_transform_kwargs: Any) -> torch.Tensor:
+        """"""
+
+
+class OnlineTorchTransformerMixin:
+    @abstractmethod
+    def fit(self, X: torch.Tensor) -> "OnlineTorchTransformerMixin":
+        """"""
+
+    @abstractmethod
+    def transform(self, X: torch.Tensor = None) -> torch.Tensor:
+        """"""
+
+    @abstractmethod
+    def update(self, X: torch.Tensor) -> torch.Tensor:
         """"""

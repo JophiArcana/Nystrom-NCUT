@@ -1,5 +1,6 @@
+import copy
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal, Tuple
 
 import torch
 from pytorch3d.ops import sample_farthest_points
@@ -13,6 +14,7 @@ from .distance_utils import (
 )
 from .transformer import (
     TorchTransformerMixin,
+    OnlineTorchTransformerMixin,
 )
 
 
@@ -21,11 +23,11 @@ SampleOptions = Literal["full", "random", "fps", "fps_recursive"]
 
 @dataclass
 class SampleConfig:
-    method: SampleOptions = "fps"
+    method: SampleOptions = "full"
     num_sample: int = 10000
     fps_dim: int = 12
     n_iter: int = None
-    _ncut_obj: TorchTransformerMixin = None
+    _recursive_obj: TorchTransformerMixin = None
 
 
 @torch.no_grad()
@@ -56,7 +58,7 @@ def subsample_features(
                         distance_type=distance_type,
                         config=SampleConfig(method="fps", num_sample=config.num_sample, fps_dim=config.fps_dim)
                     )                                                                                   # int: [... x num_sample]
-                    nc = config._ncut_obj
+                    nc = config._recursive_obj
                     for _ in range(config.n_iter):
                         fps_features, eigenvalues = nc.fit_transform(features, precomputed_sampled_indices=sampled_indices)
 
@@ -99,3 +101,95 @@ def fpsample(
     sample_indices = torch.gather(order, 1, sample_indices)                             # int: [(...) x num_sample]
 
     return sample_indices.view((*shape, *sample_indices.shape[-1:]))                    # int: [... x num_sample]
+
+
+class OnlineTransformerSubsampleFit(TorchTransformerMixin, OnlineTorchTransformerMixin):
+    def __init__(
+        self,
+        base_transformer: OnlineTorchTransformerMixin,
+        distance_type: DistanceOptions,
+        sample_config: SampleConfig,
+    ):
+        OnlineTorchTransformerMixin.__init__(self)
+        self.base_transformer: OnlineTorchTransformerMixin = base_transformer
+        self.distance_type: DistanceOptions = distance_type
+        self.sample_config: SampleConfig = sample_config
+        self.sample_config._recursive_obj = copy.deepcopy(self)
+        self.anchor_indices: torch.Tensor = None
+
+    def _fit_helper(
+        self,
+        features: torch.Tensor,
+        precomputed_sampled_indices: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        _n = features.shape[-2]
+        self.sample_config.num_sample = min(self.sample_config.num_sample, _n)
+
+        if precomputed_sampled_indices is not None:
+            self.anchor_indices = precomputed_sampled_indices
+        else:
+            self.anchor_indices = subsample_features(
+                features=features,
+                distance_type=self.distance_type,
+                config=self.sample_config,
+            )
+        sampled_features = torch.gather(features, -2, self.anchor_indices[..., None].expand([-1] * self.anchor_indices.ndim + [features.shape[-1]]))
+        self.base_transformer.fit(sampled_features)
+
+        _n_not_sampled = _n - self.anchor_indices.shape[-1]
+        if _n_not_sampled > 0:
+            unsampled_mask = torch.full(features.shape[:-1], True, device=features.device).scatter_(-1, self.anchor_indices, False)
+            unsampled_indices = torch.where(unsampled_mask)[-1].view((*features.shape[:-2], -1))
+            unsampled_features = torch.gather(features, -2, unsampled_indices[..., None].expand([-1] * unsampled_indices.ndim + [features.shape[-1]]))
+            V_unsampled = self.base_transformer.update(unsampled_features)
+        else:
+            unsampled_indices = V_unsampled = None
+        return unsampled_indices, V_unsampled
+
+    def fit(
+        self,
+        features: torch.Tensor,
+        precomputed_sampled_indices: torch.Tensor = None,
+    ) -> "OnlineTransformerSubsampleFit":
+        """Fit Nystrom Normalized Cut on the input features.
+        Args:
+            features (torch.Tensor): input features, shape (n_samples, n_features)
+            precomputed_sampled_indices (torch.Tensor): precomputed sampled indices, shape (num_sample,)
+                override the sample_method, if not None
+        Returns:
+            (NCut): self
+        """
+        self._fit_helper(features, precomputed_sampled_indices)
+        return self
+
+    def fit_transform(
+        self,
+        features: torch.Tensor,
+        precomputed_sampled_indices: torch.Tensor = None,
+    ) -> torch.Tensor:
+        """
+        Args:
+            features (torch.Tensor): input features, shape (n_samples, n_features)
+            precomputed_sampled_indices (torch.Tensor): precomputed sampled indices, shape (num_sample,)
+                override the sample_method, if not None
+
+        Returns:
+            (torch.Tensor): eigen_vectors, shape (n_samples, num_eig)
+            (torch.Tensor): eigen_values, sorted in descending order, shape (num_eig,)
+        """
+        unsampled_indices, V_unsampled = self._fit_helper(features, precomputed_sampled_indices)
+        V_sampled = self.base_transformer.transform()
+
+        if unsampled_indices is not None:
+            V = torch.zeros((*features.shape[:-1], V_sampled.shape[-1]), device=features.device)
+            for (indices, _V) in [(self.anchor_indices, V_sampled), (unsampled_indices, V_unsampled)]:
+                V.scatter_(-2, indices[..., None].expand([-1] * indices.ndim + [V_sampled.shape[-1]]), _V)
+        else:
+            V = V_sampled
+        return V
+
+    def update(self, features: torch.Tensor) -> torch.Tensor:
+        return self.base_transformer.update(features)
+
+    def transform(self, features: torch.Tensor = None, **transform_kwargs) -> torch.Tensor:
+        return self.base_transformer.transform(features)

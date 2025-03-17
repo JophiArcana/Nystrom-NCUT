@@ -1,5 +1,3 @@
-import copy
-import logging
 from abc import abstractmethod
 from typing import Literal, Tuple
 
@@ -8,15 +6,11 @@ import torch
 from ..common import (
     ceildiv,
 )
-from ..distance_utils import (
-    DistanceOptions,
-)
-from ..sampling_utils import (
-    SampleConfig,
-    subsample_features,
+from ..global_settings import (
+    CHUNK_SIZE,
 )
 from ..transformer import (
-    TorchTransformerMixin,
+    OnlineTorchTransformerMixin,
 )
 
 
@@ -37,13 +31,12 @@ class OnlineKernel:
         """"""
 
 
-class OnlineNystrom(TorchTransformerMixin):
+class OnlineNystrom(OnlineTorchTransformerMixin):
     def __init__(
         self,
         n_components: int,
         kernel: OnlineKernel,
         eig_solver: EigSolverOptions,
-        chunk_size: int = 8192,
     ):
         """
         Args:
@@ -56,8 +49,6 @@ class OnlineNystrom(TorchTransformerMixin):
         self.eig_solver: EigSolverOptions = eig_solver
         self.shape: torch.Size = None               # ...
 
-        self.chunk_size = chunk_size
-
         # Anchor matrices
         self.anchor_features: torch.Tensor = None   # [... x n x d]
         self.A: torch.Tensor = None                 # [... x n x n]
@@ -68,12 +59,13 @@ class OnlineNystrom(TorchTransformerMixin):
         # Updated matrices
         self.S: torch.Tensor = None                 # [... x n x n]
         self.transform_matrix: torch.Tensor = None  # [... x n x n_components]
-        self.eigenvalues_: torch.Tensor = None      # [... x n]
+        self.eigenvalues_: torch.Tensor = None      # [... x n_components]
 
     def _update_to_kernel(self, d: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        self.A = self.S = self.kernel.transform()
+        self.A = self.kernel.transform()
+        self.S = torch.nan_to_num(self.A, nan=0.0)
         U, L = solve_eig(
-            self.A,
+            self.S,
             num_eig=d + 1,  # d * (d + 3) // 2 + 1,
             eig_solver=self.eig_solver,
         )                                                                                           # [... x n x (? + 1)], [... x (? + 1)]
@@ -83,10 +75,6 @@ class OnlineNystrom(TorchTransformerMixin):
         return U, L
 
     def fit(self, features: torch.Tensor) -> "OnlineNystrom":
-        OnlineNystrom.fit_transform(self, features)
-        return self
-
-    def fit_transform(self, features: torch.Tensor) -> torch.Tensor:
         self.anchor_features = features
 
         self.kernel.fit(self.anchor_features)
@@ -94,11 +82,11 @@ class OnlineNystrom(TorchTransformerMixin):
 
         self.transform_matrix = (U / L[..., None, :])[..., :, :self.n_components]                   # [... x n x n_components]
         self.eigenvalues_ = L[..., :self.n_components]                                              # [... x n_components]
-        return U[..., :, :self.n_components]                                                        # [... x n x n_components]
+        return self
 
     def update(self, features: torch.Tensor) -> torch.Tensor:
         d = features.shape[-1]
-        n_chunks = ceildiv(features.shape[-2], self.chunk_size)
+        n_chunks = ceildiv(features.shape[-2], CHUNK_SIZE)
         if n_chunks > 1:
             """ Chunked version """
             chunks = torch.chunk(features, n_chunks, dim=-2)
@@ -134,117 +122,22 @@ class OnlineNystrom(TorchTransformerMixin):
 
             return B.mT @ self.transform_matrix                                                     # [... x m x n_components]
 
-    def transform(self, features: torch.Tensor) -> torch.Tensor:
-        n_chunks = ceildiv(features.shape[-2], self.chunk_size)
-        if n_chunks > 1:
-            """ Chunked version """
-            chunks = torch.chunk(features, n_chunks, dim=-2)
-            VS = []
-            for chunk in chunks:
-                VS.append(self.kernel.transform(chunk) @ self.transform_matrix)                     # [... x _m x n_components]
-            VS = torch.cat(VS, dim=-2)
+    def transform(self, features: torch.Tensor = None) -> torch.Tensor:
+        if features is None:
+            VS = self.A @ self.transform_matrix                                                     # [... x n x n_components]
         else:
-            """ Unchunked version """
-            VS = self.kernel.transform(features) @ self.transform_matrix                            # [... x m x n_components]
+            n_chunks = ceildiv(features.shape[-2], CHUNK_SIZE)
+            if n_chunks > 1:
+                """ Chunked version """
+                chunks = torch.chunk(features, n_chunks, dim=-2)
+                VS = []
+                for chunk in chunks:
+                    VS.append(self.kernel.transform(chunk) @ self.transform_matrix)                 # [... x _m x n_components]
+                VS = torch.cat(VS, dim=-2)
+            else:
+                """ Unchunked version """
+                VS = self.kernel.transform(features) @ self.transform_matrix                        # [... x m x n_components]
         return VS                                                                                   # [... x m x n_components]
-
-
-class OnlineNystromSubsampleFit(OnlineNystrom):
-    def __init__(
-        self,
-        n_components: int,
-        kernel: OnlineKernel,
-        distance_type: DistanceOptions,
-        sample_config: SampleConfig,
-        eig_solver: EigSolverOptions = "svd_lowrank",
-        chunk_size: int = 8192,
-    ):
-        OnlineNystrom.__init__(
-            self,
-            n_components=n_components,
-            kernel=kernel,
-            eig_solver=eig_solver,
-            chunk_size=chunk_size,
-        )
-        self.distance_type: DistanceOptions = distance_type
-        self.sample_config: SampleConfig = sample_config
-        self.sample_config._ncut_obj = copy.deepcopy(self)
-        self.anchor_indices: torch.Tensor = None
-
-    def _fit_helper(
-        self,
-        features: torch.Tensor,
-        precomputed_sampled_indices: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        _n = features.shape[-2]
-        if self.sample_config.num_sample >= _n:
-            logging.info(
-                f"NCUT nystrom num_sample is larger than number of input samples, nyström approximation is not needed, setting num_sample={_n}"
-            )
-            self.num_sample = _n
-
-        if precomputed_sampled_indices is not None:
-            self.anchor_indices = precomputed_sampled_indices
-        else:
-            self.anchor_indices = subsample_features(
-                features=features,
-                distance_type=self.distance_type,
-                config=self.sample_config,
-            )
-        sampled_features = torch.gather(features, -2, self.anchor_indices[..., None].expand([-1] * self.anchor_indices.ndim + [features.shape[-1]]))
-        OnlineNystrom.fit(self, sampled_features)
-
-        _n_not_sampled = _n - self.anchor_indices.shape[-1]
-        if _n_not_sampled > 0:
-            unsampled_mask = torch.full(features.shape[:-1], True, device=features.device).scatter_(-1, self.anchor_indices, False)
-            unsampled_indices = torch.where(unsampled_mask)[-1].view((*features.shape[:-2], -1))
-            unsampled_features = torch.gather(features, -2, unsampled_indices[..., None].expand([-1] * unsampled_indices.ndim + [features.shape[-1]]))
-            V_unsampled = OnlineNystrom.update(self, unsampled_features)
-        else:
-            unsampled_indices = V_unsampled = None
-        return unsampled_indices, V_unsampled
-
-    def fit(
-        self,
-        features: torch.Tensor,
-        precomputed_sampled_indices: torch.Tensor = None,
-    ) -> "OnlineNystromSubsampleFit":
-        """Fit Nystrom Normalized Cut on the input features.
-        Args:
-            features (torch.Tensor): input features, shape (n_samples, n_features)
-            precomputed_sampled_indices (torch.Tensor): precomputed sampled indices, shape (num_sample,)
-                override the sample_method, if not None
-        Returns:
-            (NCut): self
-        """
-        OnlineNystromSubsampleFit._fit_helper(self, features, precomputed_sampled_indices)
-        return self
-
-    def fit_transform(
-        self,
-        features: torch.Tensor,
-        precomputed_sampled_indices: torch.Tensor = None,
-    ) -> torch.Tensor:
-        """
-        Args:
-            features (torch.Tensor): input features, shape (n_samples, n_features)
-            precomputed_sampled_indices (torch.Tensor): precomputed sampled indices, shape (num_sample,)
-                override the sample_method, if not None
-
-        Returns:
-            (torch.Tensor): eigen_vectors, shape (n_samples, num_eig)
-            (torch.Tensor): eigen_values, sorted in descending order, shape (num_eig,)
-        """
-        unsampled_indices, V_unsampled = OnlineNystromSubsampleFit._fit_helper(self, features, precomputed_sampled_indices)
-        V_sampled = OnlineNystrom.transform(self, self.anchor_features)
-
-        if unsampled_indices is not None:
-            V = torch.zeros((*features.shape[:-1], self.n_components), device=features.device)
-            for (indices, _V) in [(self.anchor_indices, V_sampled), (unsampled_indices, V_unsampled)]:
-                V.scatter_(-2, indices[..., None].expand([-1] * indices.ndim + [self.n_components]), _V)
-        else:
-            V = V_sampled
-        return V
 
 
 def solve_eig(
