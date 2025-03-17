@@ -28,10 +28,12 @@ class KernelNCutBaseTransformer(OnlineTorchTransformerMixin):
         self.affinity_focal_gamma = affinity_focal_gamma
 
         # Anchor matrices
+        self.anchor_count: int = None                   # n
         self.W: torch.Tensor = None                     # [... x d x kernel_dim]
         self.kernelized_anchor: torch.Tensor = None     # [... x n x (2 * kernel_dim)]
 
         # Updated matrices
+        self.total_count: int = None                    # m
         self.r: torch.Tensor = None                     # [... x (2 * kernel_dim)]
         self.transform_matrix: torch.Tensor = None      # [... x (2 * kernel_dim) x n_components]
         self.eigenvalues_: torch.Tensor = None          # [... x n_components]
@@ -42,10 +44,12 @@ class KernelNCutBaseTransformer(OnlineTorchTransformerMixin):
         _, S, V = torch.svd_lowrank(torch.nan_to_num(
             normalized_kernelized_anchor, nan=0.0,
         ), q=self.n_components)                                                     # [... x n_components], [... x (2 * kernel_dim) x n_components]
-        self.transform_matrix = V * torch.nan_to_num(1 / S, posinf=0.0, neginf=0.0)[..., None, :]       # [... x (2 * kernel_dim) x n_components]
+        S = S * (self.total_count / self.anchor_count) ** 0.5
+        self.transform_matrix = V * torch.nan_to_num(1 / S, posinf=0.0, neginf=0.0)[..., None, :]   # [... x (2 * kernel_dim) x n_components]
         self.eigenvalues_ = S ** 2
 
     def fit(self, features: torch.Tensor) -> "KernelNCutBaseTransformer":
+        self.anchor_count = self.total_count = features.shape[-2]
         d = features.shape[-1]
         scale = get_normalization_factor(features) * (self.affinity_focal_gamma ** 0.5)             # [...]
         self.W = torch.randn((*features.shape[:-2], d, self.kernel_dim)) / scale[..., None, None]   # [... x d x kernel_dim]
@@ -60,6 +64,7 @@ class KernelNCutBaseTransformer(OnlineTorchTransformerMixin):
         return self
 
     def update(self, features: torch.Tensor) -> torch.Tensor:
+        self.total_count += features.shape[-2]
         W_features = features @ self.W                                              # [... x m x kernel_dim]
         kernelized_features = torch.cat((
             torch.cos(W_features),
