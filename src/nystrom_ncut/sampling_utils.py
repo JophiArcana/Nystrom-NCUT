@@ -193,3 +193,7 @@ class OnlineTransformerSubsampleFit(TorchTransformerMixin, OnlineTorchTransforme
 
     def transform(self, features: torch.Tensor = None, **transform_kwargs) -> torch.Tensor:
         return self.base_transformer.transform(features)
+
+    @property
+    def eigenvalues_(self) -> torch.Tensor:
+        return getattr(self.base_transformer, "eigenvalues_", None)
