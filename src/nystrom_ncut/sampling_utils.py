@@ -186,6 +186,13 @@ class OnlineTransformerSubsampleFit(TorchTransformerMixin, OnlineTorchTransforme
                 V.scatter_(-2, indices[..., None].expand([-1] * indices.ndim + [V_sampled.shape[-1]]), _V)
         else:
             V = V_sampled
+        # from .visualize_utils import extrapolate_knn
+        # V = extrapolate_knn(
+        #     anchor_features=self.base_transformer.anchor_features,
+        #     anchor_output=V_sampled,
+        #     extrapolation_features=features,
+        #     affinity_type="rbf",
+        # )
         return V
 
     def update(self, features: torch.Tensor) -> torch.Tensor:
