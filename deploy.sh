@@ -7,5 +7,5 @@ while IFS= read -r line; do
     fi
 done < pyproject.toml
 
-python -m build
-twine upload "dist/nystrom_ncut-$version*"
+python3.12 -m build
+python3.12 -m twine upload "dist/nystrom_ncut-$version*"
