@@ -1,4 +1,12 @@
-from typing import Dict
+"""Normalized Cut via Random Fourier Features.
+
+Approximates a shift-invariant kernel by an explicit finite-dimensional
+feature map ``phi(x) = [cos(W x), sin(W x)] / sqrt(D)`` (Rahimi & Recht 2007,
+https://people.eecs.berkeley.edu/~brecht/papers/07.rah.rec.nips.pdf). The
+normalized affinity is then represented in feature space so that the full
+``N x N`` matrix is never built.
+"""
+from typing import Dict, Optional
 
 import torch
 
@@ -12,10 +20,10 @@ from ..distance_utils import (
 )
 from ..sampling_utils import (
     SampleConfig,
-    OnlineTransformerSubsampleFit,
 )
 from ..transformer import (
     OnlineTorchTransformerMixin,
+    OnlineTransformerSubsampleFit,
 )
 
 
@@ -33,15 +41,15 @@ class KernelNCutBaseTransformer(OnlineTorchTransformerMixin):
         self.affinity_focal_gamma = affinity_focal_gamma
 
         # Anchor matrices
-        self.anchor_count: int = None                   # n
-        self.kernelized_anchor: torch.Tensor = None     # [... x n x (2 * kernel_dim)]
+        self.anchor_count: Optional[int] = None                     # n
+        self.kernelized_anchor: Optional[torch.Tensor] = None       # [... x n x (2 * kernel_dim)]
         self.store: Dict[str, torch.Tensor] = {}
 
         # Updated matrices
-        self.total_count: int = None                    # m
-        self.r: torch.Tensor = None                     # [... x (2 * kernel_dim)]
-        self.transform_matrix: torch.Tensor = None      # [... x (2 * kernel_dim) x n_components]
-        self.eigenvalues_: torch.Tensor = None          # [... x n_components]
+        self.total_count: Optional[int] = None                      # m
+        self.r: Optional[torch.Tensor] = None                       # [... x (2 * kernel_dim)]
+        self.transform_matrix: Optional[torch.Tensor] = None        # [... x (2 * kernel_dim) x n_components]
+        self.eigenvalues_: Optional[torch.Tensor] = None            # [... x n_components]
 
     def _kernelize_features(self, features: torch.Tensor) -> torch.Tensor:
         match self.affinity_type:
@@ -115,8 +123,21 @@ class KernelNCut(OnlineTransformerSubsampleFit):
         kernel_dim: int = 1024,
         affinity_type: AffinityOptions = "cosine",
         affinity_focal_gamma: float = 1.0,
-        sample_config: SampleConfig = SampleConfig(),
+        sample_config: SampleConfig = None,
     ):
+        """
+        Args:
+            n_components (int): number of top eigenvectors to return.
+            kernel_dim (int): number of random Fourier features; the explicit
+                feature map has dimensionality ``2 * kernel_dim``.
+            affinity_type (str): distance metric for the affinity matrix,
+                ['cosine', 'rbf'].
+            affinity_focal_gamma (float): affinity temperature; smaller values
+                produce sharper eigenvectors.
+            sample_config (SampleConfig): subgraph sampling configuration.
+                ``method`` is one of ['full', 'random', 'fps', 'fps_recursive'].
+        """
+        sample_config = SampleConfig() if sample_config is None else sample_config
         OnlineTransformerSubsampleFit.__init__(
             self,
             base_transformer=KernelNCutBaseTransformer(

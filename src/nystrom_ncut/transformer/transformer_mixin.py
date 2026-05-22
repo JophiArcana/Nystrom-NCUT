@@ -37,27 +37,27 @@ class TorchTransformerMixin:
     array([1, 1, 1])
     """
     @abstractmethod
-    def fit(self, X: torch.Tensor, **fit_kwargs: Any) -> "OnlineTorchTransformerMixin":
-        """"""
+    def fit(self, X: torch.Tensor, **fit_kwargs: Any) -> "TorchTransformerMixin":
+        """Fit on ``X`` and return ``self``."""
 
     @abstractmethod
     def transform(self, X: torch.Tensor = None, **transform_kwargs: Any) -> torch.Tensor:
-        """"""
+        """Transform ``X`` (or the fitted data when ``X is None``)."""
 
     @abstractmethod
     def fit_transform(self, X: torch.Tensor, **fit_transform_kwargs: Any) -> torch.Tensor:
-        """"""
+        """Fit on ``X`` and return the transformed representation."""
 
 
 class OnlineTorchTransformerMixin:
     @abstractmethod
     def fit(self, X: torch.Tensor) -> "OnlineTorchTransformerMixin":
-        """"""
+        """Fit on the anchor batch ``X`` and return ``self``."""
 
     @abstractmethod
     def transform(self, X: torch.Tensor = None) -> torch.Tensor:
-        """"""
+        """Transform ``X`` (or the anchor batch when ``X is None``)."""
 
     @abstractmethod
     def update(self, X: torch.Tensor) -> torch.Tensor:
-        """"""
+        """Incrementally update internal state with ``X`` and return its transform."""

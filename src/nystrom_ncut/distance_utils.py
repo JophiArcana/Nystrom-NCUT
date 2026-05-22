@@ -1,19 +1,20 @@
 import collections
-from typing import List, Literal, OrderedDict
+from typing import List, OrderedDict
 
 import torch
 
 from .common import lazy_normalize
+from .types import AffinityOptions, DistanceOptions
 
-
-DistanceOptions = Literal[
-    "cosine",
-    "euclidean",
-]
-AffinityOptions = Literal[
-    "cosine",
-    "rbf",
-    # "laplacian",
+__all__ = [
+    "AffinityOptions",
+    "DistanceOptions",
+    "DISTANCE_TO_AFFINITY",
+    "AFFINITY_TO_DISTANCE",
+    "to_euclidean",
+    "distance_from_features",
+    "get_normalization_factor",
+    "affinity_from_features",
 ]
 
 # noinspection PyTypeChecker
@@ -23,7 +24,6 @@ DISTANCE_TO_AFFINITY: OrderedDict[DistanceOptions, List[AffinityOptions]] = coll
     ]),
     ("euclidean", [
         "rbf",
-        # "laplacian",
     ]),
 ])
 # noinspection PyTypeChecker
@@ -106,11 +106,9 @@ def affinity_from_features(
     match affinity_type:
         case "cosine":
             pass
-        # case "laplacian":
-        #     D = D / get_normalization_factor(features_A)[..., None, None]
         case "rbf":
             D = 0.5 * (D / get_normalization_factor(features_A)[..., None, None]) ** 2
         case _:
-            raise ValueError("Affinity should be 'cosine', 'rbf', or 'laplacian'")
+            raise ValueError("Affinity should be 'cosine' or 'rbf'")
     A = torch.exp(-D / affinity_focal_gamma)    # [... x n x n]
     return A

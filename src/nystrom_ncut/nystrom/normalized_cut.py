@@ -1,3 +1,14 @@
+"""Nystrom-approximated Normalized Cut.
+
+Implements the symmetric Laplacian spectral clustering of
+Shi & Malik 2000 (*Normalized Cuts and Image Segmentation*) using the Nystrom
+extension of Fowlkes, Belongie, Chung, Malik 2004
+(https://people.eecs.berkeley.edu/~malik/papers/FBCM-nystrom.pdf):
+only the anchor-anchor block ``A`` and cross-anchor block ``B`` are
+materialized, and the full affinity ``W`` is never formed.
+"""
+from typing import Optional
+
 import einops
 import torch
 
@@ -14,6 +25,8 @@ from ..distance_utils import (
 )
 from ..sampling_utils import (
     SampleConfig,
+)
+from ..transformer import (
     OnlineTransformerSubsampleFit,
 )
 
@@ -32,19 +45,18 @@ class LaplacianKernel(OnlineKernel):
         self.eig_solver: EigSolverOptions = eig_solver
 
         # Anchor matrices
-        self.anchor_features: torch.Tensor = None                                   # [... x n x d]
-        self.anchor_mask: torch.Tensor = None
-        self.A: torch.Tensor = None                                                 # [... x n x n]
-        self.Ainv: torch.Tensor = None                                              # [... x n x n]
+        self.anchor_features: Optional[torch.Tensor] = None                         # [... x n x d]
+        self.anchor_mask: Optional[torch.Tensor] = None
+        self.A: Optional[torch.Tensor] = None                                       # [... x n x n]
+        self.Ainv: Optional[torch.Tensor] = None                                    # [... x n x n]
 
         # Updated matrices
-        self.a_r: torch.Tensor = None                                               # [... x n]
-        self.b_r: torch.Tensor = None                                               # [... x n]
+        self.a_r: Optional[torch.Tensor] = None                                     # [... x n]
+        self.b_r: Optional[torch.Tensor] = None                                     # [... x n]
 
-    def fit(self, features: torch.Tensor) -> None:
+    def fit(self, features: torch.Tensor) -> "LaplacianKernel":
         self.anchor_features = features                                             # [... x n x d]
         self.anchor_mask = torch.all(torch.isnan(self.anchor_features), dim=-1)     # [... x n]
-
 
         self.A = torch.where(self.anchor_mask[..., None], 0.0, affinity_from_features(
             features_A=self.anchor_features,                                        # [... x n x d]
@@ -61,6 +73,7 @@ class LaplacianKernel(OnlineKernel):
         self.Ainv = U @ torch.nan_to_num(torch.diag_embed(1 / L), posinf=0.0, neginf=0.0) @ U.mT    # [... x n x n]
         self.a_r = torch.where(self.anchor_mask, torch.inf, torch.sum(self.A.mT, dim=-1))           # [... x n]
         self.b_r = torch.zeros_like(self.a_r)                                                       # [... x n]
+        return self
 
     def _affinity(self, features: torch.Tensor) -> torch.Tensor:
         B = torch.where(self.anchor_mask[..., None], 0.0, affinity_from_features(
@@ -112,7 +125,7 @@ class NystromNCut(OnlineTransformerSubsampleFit):
         affinity_type: AffinityOptions = "cosine",
         affinity_focal_gamma: float = 1.0,
         adaptive_scaling: bool = False,
-        sample_config: SampleConfig = SampleConfig(),
+        sample_config: SampleConfig = None,
         eig_solver: EigSolverOptions = "svd_lowrank",
     ):
         """
@@ -122,9 +135,10 @@ class NystromNCut(OnlineTransformerSubsampleFit):
             affinity_focal_gamma (float): affinity matrix temperature, lower t reduce the not-so-connected edge weights,
                 smaller t result in more sharp eigenvectors.
             adaptive_scaling (bool): whether to scale off-diagonal affinity vectors so extended diagonal equals 1
-            sample_config (str): subgraph sampling, ['farthest', 'random'].
-                farthest point sampling is recommended for better Nystrom-approximation accuracy
-            eig_solver (str): eigen decompose solver, ['svd_lowrank', 'lobpcg', 'svd', 'eigh'].
+            sample_config (SampleConfig): subgraph sampling configuration. ``method`` is one of
+                ['full', 'random', 'fps', 'fps_recursive']; ``'fps'`` (farthest point sampling) is
+                recommended for better Nystrom-approximation accuracy.
+            eig_solver (str): eigen decomposition solver, ['svd_lowrank', 'lobpcg', 'svd', 'eigh'].
         """
         OnlineTransformerSubsampleFit.__init__(
             self,
@@ -134,5 +148,5 @@ class NystromNCut(OnlineTransformerSubsampleFit):
                 eig_solver=eig_solver,
             ),
             distance_type=AFFINITY_TO_DISTANCE[affinity_type],
-            sample_config=sample_config,
+            sample_config=SampleConfig() if sample_config is None else sample_config,
         )

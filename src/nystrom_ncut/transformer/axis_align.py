@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Optional
 
 import torch
 import torch.nn.functional as Fn
@@ -6,27 +6,37 @@ import torch.nn.functional as Fn
 from ..common import (
     default_device,
 )
+from ..types import (
+    AxisAlignSortOptions,
+)
 from .transformer_mixin import (
     TorchTransformerMixin,
 )
 
 
 class AxisAlign(TorchTransformerMixin):
-    """Multiclass Spectral Clustering, SX Yu, J Shi, 2003
-    Args:
-        max_iter (int, optional): Maximum number of iterations.
+    """Multiclass spectral discretization (Yu & Shi, 2003).
+
+    Iteratively rotates the eigenvector basis and discretizes it via argmax to
+    recover hard cluster assignments.
     """
-    SortOptions = Literal["count", "norm", "marginal_norm"]
+    SortOptions = AxisAlignSortOptions
 
     def __init__(
         self,
-        sort_method: SortOptions = "norm",
+        sort_method: AxisAlignSortOptions = "norm",
         max_iter: int = 100,
     ):
-        self.sort_method: AxisAlign.SortOptions = sort_method
+        """
+        Args:
+            sort_method: how to reorder the rotated dimensions, one of
+                ``'count'``, ``'norm'``, ``'marginal_norm'``.
+            max_iter: maximum number of rotation/discretization iterations.
+        """
+        self.sort_method: AxisAlignSortOptions = sort_method
         self.max_iter: int = max_iter
 
-        self.R: torch.Tensor = None
+        self.R: Optional[torch.Tensor] = None
 
     def fit(self, X: torch.Tensor) -> "AxisAlign":
         # Normalize eigenvectors

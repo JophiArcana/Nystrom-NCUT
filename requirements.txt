@@ -1,9 +1,8 @@
-einops
-scikit-learn==1.6.1
-umap-learn
-pycolormap-2d
-tqdm
-torch==2.5.1
-pytorch3d==0.7.8
-torchdata==0.10.1
-torchvision==0.20.1
+einops>=0.6
+numpy>=1.23
+pycolormap-2d>=1.0
+pytorch3d>=0.7
+scikit-learn>=1.2
+torch>=2.0
+tqdm>=4.0
+umap-learn>=0.5

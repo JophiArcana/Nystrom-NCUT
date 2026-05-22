@@ -10,14 +10,23 @@ def ceildiv(a: int, b: int) -> int:
 
 
 def lazy_normalize(x: torch.Tensor, n: int = 1000, **normalize_kwargs: Any) -> torch.Tensor:
-    numel = np.prod(x.shape[:-1])
-    n = min(n, numel)
-    random_indices = torch.randperm(numel, device=x.device)[:n]
-    _x = x.view((-1, x.shape[-1]))[random_indices]
-    if torch.allclose(torch.norm(_x, **normalize_kwargs), torch.ones(n, device=x.device)):
+    """L2-normalize ``x`` unless it already appears to be normalized.
+
+    Inspects up to ``n`` rows (deterministically, evenly spaced) to decide
+    whether ``x`` needs renormalization. Avoiding the renormalization is purely
+    a runtime optimization; the result is equivalent to
+    ``torch.nn.functional.normalize(x, **normalize_kwargs)``.
+    """
+    flat = x.view((-1, x.shape[-1]))
+    numel = flat.shape[0]
+    if numel == 0:
         return x
-    else:
-        return Fn.normalize(x, **normalize_kwargs)
+    n = min(n, numel)
+    step = max(1, numel // n)
+    _x = flat[::step][:n]
+    if torch.allclose(torch.norm(_x, **normalize_kwargs), torch.ones(_x.shape[0], device=x.device)):
+        return x
+    return Fn.normalize(x, **normalize_kwargs)
 
 
 def quantile_min_max(x: torch.Tensor, q1: float, q2: float, n_sample: int = 10000):
@@ -32,13 +41,13 @@ def quantile_min_max(x: torch.Tensor, q1: float, q2: float, n_sample: int = 1000
 
 
 def quantile_normalize(x: torch.Tensor, q: float = 0.95):
-    """normalize each dimension of x to [0, 1], take 95-th percentage, this robust to outliers
-        </br> 1. sort x
-        </br> 2. take q-th quantile
-        </br>     min_value -> (1-q)-th quantile
-        </br>     max_value -> q-th quantile
-        </br> 3. normalize
-        </br> x = (x - min_value) / (max_value - min_value)
+    """Normalize each dimension of ``x`` to ``[0, 1]`` using a quantile range.
+
+    Robust to outliers:
+
+    1. Sort ``x``.
+    2. Take the ``q``-th quantile and the ``(1 - q)``-th quantile.
+    3. Scale: ``x = clamp((x - vmin) / (vmax - vmin), 0, 1)``.
 
     Args:
         x (torch.Tensor): input tensor, shape (n_samples, n_features)

@@ -11,13 +11,59 @@ authors = [
 ]
 description = "Normalized Cut and Nyström Approximation"
 readme = "README.md"
-requires-python = ">=3"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+]
+dependencies = [
+    "einops>=0.6",
+    "numpy>=1.23",
+    "pycolormap-2d>=1.0",
+    "pytorch3d>=0.7",
+    "scikit-learn>=1.2",
+    "torch>=2.0",
+    "tqdm>=4.0",
+    "umap-learn>=0.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "matplotlib>=3.7",
+    "pytest>=7.0",
+    "ruff>=0.4",
 ]
 
 [project.urls]
 Documentation = "https://github.com/JophiArcana/Nystrom-NCUT/"
 Github = "https://github.com/JophiArcana/Nystrom-NCUT/"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E501",  # let formatters handle line length
+    "E731",  # allow lambda assignments
+    "E741",  # allow ambiguous one-letter names (math notation)
+    "E721",  # allow `==` for type comparisons (used for device comparisons)
+    "F403",  # allow ``from X import *`` in __init__ shims
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/**/__init__.py" = ["F401"]
+"src/nystrom_ncut/visualize_utils.py" = ["F401"]
+"tests/*" = ["F401"]
+
