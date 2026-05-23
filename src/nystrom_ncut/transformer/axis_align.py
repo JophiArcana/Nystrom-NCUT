@@ -53,11 +53,20 @@ class AxisAlign(TorchTransformerMixin):
             start_idx = torch.argmax(mask.to(torch.float) + torch.rand(mask.shape), dim=-1)                     # int: [...]
             self.R[..., 0, :] = get_idx(start_idx)
 
-            # Loop to populate R with k orthogonal directions
+            # Loop to populate R with k orthogonal directions. We track the
+            # already-picked indices and forbid them so the argmin can't repeat
+            # a row on pathological inputs (e.g. duplicate or fully-collinear
+            # rows).
+            picked = [start_idx]
             c = torch.zeros(X.shape[:-1])                                                                       # float: [... x n]
             for i in range(1, d):
                 c += torch.abs(normalized_X @ self.R[..., i - 1, :, None])[..., 0]
-                self.R[..., i, :] = get_idx(torch.argmin(c.nan_to_num(nan=torch.inf), dim=-1))
+                score = c.nan_to_num(nan=torch.inf)
+                for prev in picked:
+                    score = score.scatter(-1, prev[..., None], torch.inf)
+                next_idx = torch.argmin(score, dim=-1)
+                self.R[..., i, :] = get_idx(next_idx)
+                picked.append(next_idx)
 
             # Iterative optimization loop
             normalized_X = torch.nan_to_num(normalized_X, nan=0.0)

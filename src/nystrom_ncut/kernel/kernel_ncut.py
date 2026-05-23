@@ -34,11 +34,13 @@ class KernelNCutBaseTransformer(OnlineTorchTransformerMixin):
         kernel_dim: int,
         affinity_type: AffinityOptions,
         affinity_focal_gamma: float,
+        random_state: Optional[int] = None,
     ):
         self.n_components: int = n_components
         self.kernel_dim: int = kernel_dim
         self.affinity_type: AffinityOptions = affinity_type
         self.affinity_focal_gamma = affinity_focal_gamma
+        self.random_state: Optional[int] = random_state
 
         # Anchor matrices
         self.anchor_count: Optional[int] = None                     # n
@@ -82,7 +84,14 @@ class KernelNCutBaseTransformer(OnlineTorchTransformerMixin):
                 scale = self.affinity_focal_gamma ** 0.5
                 if self.affinity_type == "rbf":
                     scale = get_normalization_factor(features)[..., None, None] * scale                     # [... x 1 x 1]
-                self.store["W"] = torch.randn((*shape, d, self.kernel_dim), device=features.device) / scale # [... x d x kernel_dim]
+                generator: Optional[torch.Generator] = None
+                if self.random_state is not None:
+                    generator = torch.Generator(device=features.device).manual_seed(self.random_state)
+                self.store["W"] = torch.randn(
+                    (*shape, d, self.kernel_dim),
+                    device=features.device,
+                    generator=generator,
+                ) / scale                                                                                   # [... x d x kernel_dim]
 
             case _:
                 raise ValueError(self.affinity_type)
@@ -124,6 +133,7 @@ class KernelNCut(OnlineTransformerSubsampleFit):
         affinity_type: AffinityOptions = "cosine",
         affinity_focal_gamma: float = 1.0,
         sample_config: SampleConfig = None,
+        random_state: Optional[int] = None,
     ):
         """
         Args:
@@ -136,6 +146,10 @@ class KernelNCut(OnlineTransformerSubsampleFit):
                 produce sharper eigenvectors.
             sample_config (SampleConfig): subgraph sampling configuration.
                 ``method`` is one of ['full', 'random', 'fps', 'fps_recursive'].
+            random_state (int): if set, seeds a dedicated ``torch.Generator`` for
+                the random Fourier projection ``W`` so fits are reproducible
+                without touching the global RNG. Defaults to ``None`` (uses
+                global RNG).
         """
         sample_config = SampleConfig() if sample_config is None else sample_config
         OnlineTransformerSubsampleFit.__init__(
@@ -145,6 +159,7 @@ class KernelNCut(OnlineTransformerSubsampleFit):
                 kernel_dim=kernel_dim,
                 affinity_type=affinity_type,
                 affinity_focal_gamma=affinity_focal_gamma,
+                random_state=random_state,
             ),
             distance_type=AFFINITY_TO_DISTANCE[affinity_type],
             sample_config=sample_config,

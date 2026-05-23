@@ -36,6 +36,7 @@ def extrapolate_knn(
     affinity_focal_gamma: float = 1.0,
     device: Optional[str] = None,
     move_output_to_cpu: bool = False,
+    chunk_size: Optional[int] = None,
 ) -> torch.Tensor:                                  # [m x d']
     """Propagate ``anchor_output`` to ``extrapolation_features`` via KNN.
 
@@ -49,6 +50,9 @@ def extrapolate_knn(
         affinity_focal_gamma (float): affinity temperature.
         device (str): device to use; defaults to ``anchor_output.device``.
         move_output_to_cpu (bool): if ``True``, moves each chunk back to CPU.
+        chunk_size (int): per-call override for the chunk size used to iterate
+            over ``extrapolation_features``. Defaults to the module-level
+            ``CHUNK_SIZE`` constant.
 
     Returns:
         torch.Tensor: propagated output, shape ``(m, d')``.
@@ -62,7 +66,8 @@ def extrapolate_knn(
     device = anchor_output.device if device is None else device
     anchor_output = anchor_output.to(device)
 
-    n_chunks = ceildiv(extrapolation_features.shape[0], CHUNK_SIZE)
+    effective_chunk_size = chunk_size if chunk_size is not None else CHUNK_SIZE
+    n_chunks = ceildiv(extrapolation_features.shape[0], effective_chunk_size)
     V_list = []
     for _v in torch.chunk(extrapolation_features, n_chunks, dim=0):
         _v = _v.to(device)                                                                              # [_m x d]
@@ -99,6 +104,7 @@ def extrapolate_knn_with_subsampling(
     affinity_focal_gamma: float = 1.0,
     device: Optional[str] = None,
     move_output_to_cpu: bool = False,
+    chunk_size: Optional[int] = None,
 ) -> torch.Tensor:                                  # [m x d']
     """Subsample anchors from ``full_features`` then call :func:`extrapolate_knn`.
 
@@ -116,6 +122,8 @@ def extrapolate_knn_with_subsampling(
         affinity_focal_gamma (float): affinity temperature.
         device (str): device to use; defaults to ``full_output.device``.
         move_output_to_cpu (bool): if ``True``, moves each chunk back to CPU.
+        chunk_size (int): per-call override for the chunk size; forwarded to
+            :func:`extrapolate_knn`. Defaults to the module-level ``CHUNK_SIZE``.
 
     Returns:
         torch.Tensor: propagated output, shape ``(m, d')``.
@@ -151,4 +159,5 @@ def extrapolate_knn_with_subsampling(
         affinity_focal_gamma=affinity_focal_gamma,
         device=device,
         move_output_to_cpu=move_output_to_cpu,
+        chunk_size=chunk_size,
     )

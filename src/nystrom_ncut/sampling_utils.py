@@ -66,7 +66,7 @@ def subsample_features(
     """
     features = features.detach()                                                                        # float: [... x n x d]
     with default_device(features.device):
-        if config.method == "full" or config.num_sample >= features.shape[0]:
+        if config.method == "full" or config.num_sample >= features.shape[-2]:
             sampled_indices = torch.arange(features.shape[-2]).expand(features.shape[:-1])              # int: [... x n]
         else:
             match config.method:
@@ -128,7 +128,12 @@ def fpsample(
         )[1]                                                                            # int: [(...) x num_sample]
     except RuntimeError:
         original_device = features.device
-        alternative_device = "cuda" if original_device == "cpu" else "cpu"
+        if original_device.type != "cpu":
+            alternative_device = torch.device("cpu")
+        elif torch.cuda.is_available():
+            alternative_device = torch.device("cuda")
+        else:
+            raise
         sample_indices = sample_farthest_points(
             features.to(alternative_device), lengths=count.to(alternative_device), K=config.num_sample,
         )[1].to(original_device)                                                        # int: [(...) x num_sample]

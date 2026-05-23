@@ -50,3 +50,29 @@ def test_clusters_in_basis() -> None:
     for i in range(k):
         block = labels[i * n_per : (i + 1) * n_per]
         assert (block == block[0]).all()
+
+
+def test_axis_align_init_unique_anchor_rows() -> None:
+    """The init loop in :class:`AxisAlign.fit` must pick distinct row indices
+    even when the data sits in a lower-dimensional subspace (causing the
+    orthogonal-direction argmin to tie). The previous implementation would
+    re-pick the smallest already-picked index on a tie, leaving ``R`` with
+    duplicate rows. We skip the iterative SVD loop (``max_iter=0``) so the
+    test is checking the init pass directly.
+    """
+    # Pathological 4-row input on a 2D plane: with d=4 the orthogonal-direction
+    # search must exhaust fresh directions on the third pick.
+    X = torch.tensor([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0, 0.0],
+        [1.0, -1.0, 0.0, 0.0],
+    ])
+    aa = AxisAlign(sort_method="norm", max_iter=0)
+    aa.fit(X)
+    d = aa.R.shape[-2]
+    for i in range(d):
+        for j in range(i + 1, d):
+            assert not torch.equal(aa.R[i], aa.R[j]), (
+                f"Init picked the same row twice: R[{i}] == R[{j}]"
+            )

@@ -9,7 +9,6 @@ materialized, and the full affinity ``W`` is never formed.
 """
 from typing import Optional
 
-import einops
 import torch
 
 from .nystrom_utils import (
@@ -48,11 +47,24 @@ class LaplacianKernel(OnlineKernel):
         self.anchor_features: Optional[torch.Tensor] = None                         # [... x n x d]
         self.anchor_mask: Optional[torch.Tensor] = None
         self.A: Optional[torch.Tensor] = None                                       # [... x n x n]
-        self.Ainv: Optional[torch.Tensor] = None                                    # [... x n x n]
+        # `Ainv` is kept as a public attribute for back-compat introspection, but
+        # is not materialized in `fit`; consumers use `_apply_Ainv` instead, which
+        # applies the factored low-rank inverse `_Ainv_UL @ _Ainv_VT @ x`.
+        self.Ainv: Optional[torch.Tensor] = None                                    # [... x n x n] (unused)
+        self._Ainv_UL: Optional[torch.Tensor] = None                                # [... x n x (d + 1)]
+        self._Ainv_VT: Optional[torch.Tensor] = None                                # [... x (d + 1) x n]
 
         # Updated matrices
         self.a_r: Optional[torch.Tensor] = None                                     # [... x n]
         self.b_r: Optional[torch.Tensor] = None                                     # [... x n]
+
+    def _apply_Ainv(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the factored low-rank inverse ``Ainv @ x`` without materializing
+        the dense ``n x n`` matrix. Equivalent to ``self.Ainv @ x`` when
+        ``self.Ainv = self._Ainv_UL @ self._Ainv_VT`` is the truncated
+        pseudo-inverse from the top ``(d + 1)`` eigendirections of ``A``.
+        """
+        return self._Ainv_UL @ (self._Ainv_VT @ x)
 
     def fit(self, features: torch.Tensor) -> "LaplacianKernel":
         self.anchor_features = features                                             # [... x n x d]
@@ -67,11 +79,14 @@ class LaplacianKernel(OnlineKernel):
         d = features.shape[-1]
         U, L = solve_eig(
             torch.nan_to_num(self.A, nan=0.0),
-            num_eig=d + 1,  # d * (d + 3) // 2 + 1,
+            num_eig=d + 1,  # truncated pseudo-inverse rank for the anchor block
             eig_solver=self.eig_solver,
         )                                                                                           # [... x n x (d + 1)], [... x (d + 1)]
-        self.Ainv = U @ torch.nan_to_num(torch.diag_embed(1 / L), posinf=0.0, neginf=0.0) @ U.mT    # [... x n x n]
-        self.a_r = torch.where(self.anchor_mask, torch.inf, torch.sum(self.A.mT, dim=-1))           # [... x n]
+        L_inv = torch.nan_to_num(1 / L, posinf=0.0, neginf=0.0)                                     # [... x (d + 1)]
+        self._Ainv_UL = U * L_inv[..., None, :]                                                     # [... x n x (d + 1)]
+        self._Ainv_VT = U.mT                                                                        # [... x (d + 1) x n]
+        self.Ainv = None                                                                             # see attribute docstring
+        self.a_r = torch.where(self.anchor_mask, torch.inf, torch.sum(self.A, dim=-1))             # [... x n]
         self.b_r = torch.zeros_like(self.a_r)                                                       # [... x n]
         return self
 
@@ -83,14 +98,16 @@ class LaplacianKernel(OnlineKernel):
             affinity_focal_gamma=self.affinity_focal_gamma,
         ))                                                                          # [... x n x m]
         if self.adaptive_scaling:
-            diagonal = (
-                einops.rearrange(B, "... n m -> ... m 1 n")                         # [... x m x 1 x n]
-                @ self.Ainv                                                         # [... x n x n]
-                @ einops.rearrange(B, "... n m -> ... m n 1")                       # [... x m x n x 1]
-            ).squeeze(-2, -1)                                                       # [... x m]
+            # diag(B^T Ainv B) computed via a single fused matmul + elementwise sum.
+            diagonal = (B * self._apply_Ainv(B)).sum(dim=-2)                        # [... x m]
             adaptive_scale = diagonal ** -0.5                                       # [... x m]
             B = B * adaptive_scale[..., None, :]
         return B                                                                    # [... x n x m]
+
+    def accumulate(self, features: torch.Tensor) -> None:
+        """Cheap stats-only path: compute B, add its row sums into ``b_r``."""
+        B = self._affinity(features)                                                # [... x n x m]
+        self.b_r = self.b_r + torch.sum(torch.nan_to_num(B, nan=0.0), dim=-1)       # [... x n]
 
     def update(self, features: torch.Tensor) -> torch.Tensor:
         B = self._affinity(features)                                                # [... x n x m]
@@ -99,7 +116,7 @@ class LaplacianKernel(OnlineKernel):
         self.b_r = self.b_r + b_r                                                   # [... x n]
 
         row_sum = self.a_r + self.b_r                                               # [... x n]
-        col_sum = b_c + (B.mT @ (self.Ainv @ self.b_r[..., None]))[..., 0]          # [... x m]
+        col_sum = b_c + (B.mT @ self._apply_Ainv(self.b_r[..., None]))[..., 0]      # [... x m]
         scale = (row_sum[..., :, None] * col_sum[..., None, :]) ** -0.5             # [... x n x m]
         return (B * scale).mT                                                       # [... x m x n]
 
@@ -111,7 +128,7 @@ class LaplacianKernel(OnlineKernel):
         else:
             B = self._affinity(features)                                            # [... x n x m]
             b_c = torch.sum(B, dim=-2)                                              # [... x m]
-            col_sum = b_c + (B.mT @ (self.Ainv @ self.b_r[..., None]))[..., 0]      # [... x m]
+            col_sum = b_c + (B.mT @ self._apply_Ainv(self.b_r[..., None]))[..., 0]  # [... x m]
         scale = (row_sum[..., :, None] * col_sum[..., None, :]) ** -0.5             # [... x n x m]
         return (B * scale).mT                                                       # [... x m x n]
 
@@ -127,6 +144,8 @@ class NystromNCut(OnlineTransformerSubsampleFit):
         adaptive_scaling: bool = False,
         sample_config: SampleConfig = None,
         eig_solver: EigSolverOptions = "svd_lowrank",
+        low_memory: bool = False,
+        chunk_size: Optional[int] = None,
     ):
         """
         Args:
@@ -139,6 +158,12 @@ class NystromNCut(OnlineTransformerSubsampleFit):
                 ['full', 'random', 'fps', 'fps_recursive']; ``'fps'`` (farthest point sampling) is
                 recommended for better Nystrom-approximation accuracy.
             eig_solver (str): eigen decomposition solver, ['svd_lowrank', 'lobpcg', 'svd', 'eigh'].
+            low_memory (bool): if True, the chunked update path trades an extra
+                pass of cross-affinity computation for ``O(total_m * (d+1))``
+                less memory. Defaults to False (faster, higher memory).
+            chunk_size (int): per-instance override for the chunk size used in
+                the update/transform loops. Defaults to the module-level
+                ``CHUNK_SIZE`` constant.
         """
         OnlineTransformerSubsampleFit.__init__(
             self,
@@ -146,6 +171,8 @@ class NystromNCut(OnlineTransformerSubsampleFit):
                 n_components=n_components,
                 kernel=LaplacianKernel(affinity_type, affinity_focal_gamma, adaptive_scaling, eig_solver),
                 eig_solver=eig_solver,
+                low_memory=low_memory,
+                chunk_size=chunk_size,
             ),
             distance_type=AFFINITY_TO_DISTANCE[affinity_type],
             sample_config=SampleConfig() if sample_config is None else sample_config,

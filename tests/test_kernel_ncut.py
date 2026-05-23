@@ -55,3 +55,38 @@ def test_subsampled_consistency(small_features: torch.Tensor) -> None:
     V2 = kn2.fit_transform(small_features)
 
     assert torch.allclose(V1, V2)
+
+
+def test_random_state_reproducible(small_features: torch.Tensor) -> None:
+    """`random_state` seeds a dedicated generator for the random Fourier
+    projection ``W`` so the projection is reproducible across fits with the
+    same seed, even when the global RNG has been advanced. (Downstream
+    ``svd_lowrank`` is itself randomized and still uses the global RNG, so we
+    assert reproducibility on ``W`` directly, not on the final embedding.)
+    """
+    kn1 = KernelNCut(
+        n_components=3, kernel_dim=128, affinity_type="cosine",
+        sample_config=SampleConfig(method="full"), random_state=7,
+    )
+    kn1.fit(small_features)
+    W1 = kn1.base_transformer.store["W"].clone()
+
+    # Advance the global RNG to prove independence.
+    _ = torch.randn(1000)
+
+    kn2 = KernelNCut(
+        n_components=3, kernel_dim=128, affinity_type="cosine",
+        sample_config=SampleConfig(method="full"), random_state=7,
+    )
+    kn2.fit(small_features)
+    W2 = kn2.base_transformer.store["W"]
+    assert torch.equal(W1, W2)
+
+    # A different seed must produce a different projection.
+    kn3 = KernelNCut(
+        n_components=3, kernel_dim=128, affinity_type="cosine",
+        sample_config=SampleConfig(method="full"), random_state=99,
+    )
+    kn3.fit(small_features)
+    W3 = kn3.base_transformer.store["W"]
+    assert not torch.equal(W1, W3)

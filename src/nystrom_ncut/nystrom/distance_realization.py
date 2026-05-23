@@ -79,6 +79,17 @@ class GramKernel(OnlineKernel):
             + torch.sum(Ainv_br * self.b_r, dim=-1)                     # [...]
         )
 
+    def accumulate(self, features: torch.Tensor) -> None:
+        """Cheap stats-only path: accumulate ``b_r``, ``n_features``, ``matrix_sum``."""
+        B = -0.5 * distance_from_features(
+            self.anchor_features,
+            features,
+            distance_type=self.distance_type,
+        )                                                               # [... x n x m]
+        self.b_r = self.b_r + torch.sum(B, dim=-1)                      # [... x n]
+        self.n_features += features.shape[-2]                           # N
+        self._refresh_matrix_sum()
+
     def update(self, features: torch.Tensor) -> torch.Tensor:
         B = -0.5 * distance_from_features(
             self.anchor_features,
@@ -132,6 +143,8 @@ class DistanceRealization(OnlineTransformerSubsampleFit):
         distance_type: DistanceOptions = "cosine",
         sample_config: SampleConfig = None,
         eig_solver: EigSolverOptions = "svd_lowrank",
+        low_memory: bool = False,
+        chunk_size: Optional[int] = None,
     ):
         """
         Args:
@@ -139,6 +152,12 @@ class DistanceRealization(OnlineTransformerSubsampleFit):
             distance_type (str): distance metric for the Gram kernel, ['cosine', 'euclidean'].
             sample_config (SampleConfig): subgraph sampling configuration.
             eig_solver (str): eigen decomposition solver, ['svd_lowrank', 'lobpcg', 'svd', 'eigh'].
+            low_memory (bool): if True, the chunked update path trades an extra
+                pass of cross-affinity computation for ``O(total_m * (d+1))``
+                less memory. Defaults to False (faster, higher memory).
+            chunk_size (int): per-instance override for the chunk size used in
+                the update/transform loops. Defaults to the module-level
+                ``CHUNK_SIZE`` constant.
         """
         OnlineTransformerSubsampleFit.__init__(
             self,
@@ -146,6 +165,8 @@ class DistanceRealization(OnlineTransformerSubsampleFit):
                 n_components=n_components,
                 kernel=GramKernel(distance_type, eig_solver),
                 eig_solver=eig_solver,
+                low_memory=low_memory,
+                chunk_size=chunk_size,
             ),
             distance_type=distance_type,
             sample_config=SampleConfig() if sample_config is None else sample_config,

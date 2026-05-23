@@ -23,7 +23,7 @@ dependencies = [
     "einops>=0.6",
     "numpy>=1.23",
     "pycolormap-2d>=1.0",
-    "pytorch3d>=0.7",
+    "pytorch3d>=0.7; platform_system != 'Darwin' or platform_machine != 'arm64'",
     "scikit-learn>=1.2",
     "torch>=2.0",
     "tqdm>=4.0",
