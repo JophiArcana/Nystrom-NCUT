@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nystrom_ncut"
-version = "0.4.0"
+version = "0.4.1"
 authors = [
     { name = "Wentinn Liao", email = "wentinn.liao@gmail.com" },
 ]
