@@ -52,7 +52,7 @@ def distance_from_features(
     Args:
         features_A (torch.Tensor): input features, shape (n_samples, n_features)
         features_B (torch.Tensor, optional): optional, if not None, compute affinity between two features
-        distance_type (str): distance metric, 'cosine' (default) or 'euclidean', 'rbf'.
+        distance_type (str): distance metric, 'cosine' or 'euclidean'.
     Returns:
         (torch.Tensor): affinity matrix, shape (n_samples, n_samples)
     """
@@ -92,7 +92,7 @@ def affinity_from_features(
         features_B (torch.Tensor, optional): optional, if not None, compute affinity between two features
         affinity_focal_gamma (float): affinity matrix parameter, lower t reduce the edge weights
             on weak connections, default 1.0
-        affinity_type (str): distance metric, 'cosine' (default) or 'euclidean'.
+        affinity_type (str): affinity metric, 'cosine' or 'rbf'.
     Returns:
         (torch.Tensor): affinity matrix, shape (n_samples, n_samples)
     """

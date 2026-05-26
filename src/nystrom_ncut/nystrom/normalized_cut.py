@@ -139,7 +139,7 @@ class NystromNCut(OnlineTransformerSubsampleFit):
     def __init__(
         self,
         n_components: int,
-        affinity_type: AffinityOptions = "cosine",
+        affinity_type: AffinityOptions = "rbf",
         affinity_focal_gamma: float = 1.0,
         adaptive_scaling: bool = False,
         sample_config: SampleConfig = None,

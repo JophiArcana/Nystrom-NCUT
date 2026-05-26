@@ -130,7 +130,7 @@ class KernelNCut(OnlineTransformerSubsampleFit):
         self,
         n_components: int,
         kernel_dim: int = 1024,
-        affinity_type: AffinityOptions = "cosine",
+        affinity_type: AffinityOptions = "rbf",
         affinity_focal_gamma: float = 1.0,
         sample_config: SampleConfig = None,
         random_state: Optional[int] = None,

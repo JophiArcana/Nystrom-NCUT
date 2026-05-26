@@ -61,7 +61,7 @@ def extrapolate_knn(
         >>> anchor_features = torch.randn(3000, 100)
         >>> anchor_output = torch.randn(3000, 20)
         >>> new_features = torch.randn(200, 100)
-        >>> new_output = extrapolate_knn(anchor_features, anchor_output, new_features, "cosine", knn=3)
+        >>> new_output = extrapolate_knn(anchor_features, anchor_output, new_features, "rbf", knn=3)
     """
     device = anchor_output.device if device is None else device
     anchor_output = anchor_output.to(device)
@@ -135,7 +135,7 @@ def extrapolate_knn_with_subsampling(
         >>> new_features = torch.randn(200, 100)
         >>> new_eigenvectors = extrapolate_knn_with_subsampling(
         ...     old_features, old_eigenvectors, new_features,
-        ...     SampleConfig(method="fps", num_sample=512), "cosine", knn=3,
+        ...     SampleConfig(method="fps", num_sample=512), "rbf", knn=3,
         ... )
     """
     device = full_output.device if device is None else device

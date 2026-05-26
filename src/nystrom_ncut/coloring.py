@@ -101,7 +101,7 @@ def _rgb_with_dimensionality_reduction(
 def rgb_from_tsne_2d(
     features: torch.Tensor,
     num_sample: int = 1000,
-    affinity_type: AffinityOptions = "cosine",
+    affinity_type: AffinityOptions = "rbf",
     perplexity: int = 150,
     q: float = 0.95,
     knn: int = 10,
@@ -138,7 +138,7 @@ def rgb_from_tsne_2d(
 def rgb_from_tsne_3d(
     features: torch.Tensor,
     num_sample: int = 1000,
-    affinity_type: AffinityOptions = "cosine",
+    affinity_type: AffinityOptions = "rbf",
     perplexity: int = 150,
     q: float = 0.95,
     knn: int = 10,
@@ -175,7 +175,7 @@ def rgb_from_tsne_3d(
 def rgb_from_euclidean_tsne_3d(
     features: torch.Tensor,
     num_sample: int = 1000,
-    affinity_type: AffinityOptions = "cosine",
+    affinity_type: AffinityOptions = "rbf",
     perplexity: int = 150,
     q: float = 0.95,
     knn: int = 10,
@@ -211,7 +211,7 @@ def rgb_from_euclidean_tsne_3d(
 def rgb_from_umap_2d(
     features: torch.Tensor,
     num_sample: int = 1000,
-    affinity_type: AffinityOptions = "cosine",
+    affinity_type: AffinityOptions = "rbf",
     n_neighbors: int = 150,
     min_dist: float = 0.1,
     q: float = 0.95,
@@ -243,7 +243,7 @@ def rgb_from_umap_2d(
 def rgb_from_umap_sphere(
     features: torch.Tensor,
     num_sample: int = 1000,
-    affinity_type: AffinityOptions = "cosine",
+    affinity_type: AffinityOptions = "rbf",
     n_neighbors: int = 150,
     min_dist: float = 0.1,
     q: float = 0.95,
@@ -282,7 +282,7 @@ def rgb_from_umap_sphere(
 def rgb_from_umap_3d(
     features: torch.Tensor,
     num_sample: int = 1000,
-    affinity_type: AffinityOptions = "cosine",
+    affinity_type: AffinityOptions = "rbf",
     n_neighbors: int = 150,
     min_dist: float = 0.1,
     q: float = 0.95,

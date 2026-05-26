@@ -50,7 +50,7 @@ inp = model_features.reshape(-1, 768)
 
 ncut = NystromNCut(
     n_components=100,
-    affinity_type="cosine",
+    affinity_type="rbf",
     sample_config=SampleConfig(method="fps", num_sample=10000),
 )
 eigvectors = ncut.fit_transform(inp)              # (20*64*64, 100)
